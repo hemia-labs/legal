@@ -1,22 +1,26 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Barlow_Condensed, Montserrat } from "next/font/google";
 import "./globals.css";
-import { AppSidebar } from "@/components/app-sidebar";
-import { AppTopbar } from "@/components/app-topbar";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const sans = Montserrat({
+  variable: "--font-montserrat",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const display = Barlow_Condensed({
+  weight: "600",
+  variable: "--font-barlow-condensed",
   subsets: ["latin"],
 });
+
+const themeScript = `try{document.documentElement.classList.toggle("dark",localStorage.getItem("theme")==="dark")}catch{}`;
 
 export const metadata: Metadata = {
-  title: "Nextjs Template",
+  title: "Hemia Legal",
   description: "Workspace de documentación B2B",
+  icons: {
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+  },
 };
 
 export default function RootLayout({
@@ -27,15 +31,13 @@ export default function RootLayout({
   return (
     <html
       lang="es"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+      className={`${sans.variable} ${display.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full">
-        <AppSidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <AppTopbar />
-          <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
-        </div>
-      </body>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      <body className="min-h-full">{children}</body>
     </html>
   );
 }

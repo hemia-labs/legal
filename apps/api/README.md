@@ -19,7 +19,7 @@ La base de datos viene **desactivada** hasta que la configures (ver abajo).
 apps/api/
   data-source.ts                 # DataSource para el CLI de migraciones
   src/
-    main.ts                      # bootstrap: ValidationPipe global + CORS, escucha PORT (3001)
+    main.ts                      # bootstrap: ValidationPipe global + CORS, escucha PORT (3017)
     app.module.ts                # módulo raíz (DatabaseModule/WidgetsModule comentados hasta tener DB)
     config/
       database.config.ts         # config namespaced 'database' (registerAs)
@@ -41,9 +41,25 @@ DB_USERNAME=
 DB_PASSWORD=
 DB_DATABASE=
 DB_LOGGING=false
+
+# RabbitMQ / Event Bus de provisioning Access → Legal
+AMQP_URL=amqp://user:password@localhost:5672
+EVENT_BUS_ENABLED=true
+EVENT_BUS_SERVICE_NAME=hemia-legal
+EVENT_BUS_PREFETCH=10
+EVENT_LOG_FILE=events.log.jsonl
+
+# S3 privado para publicaciones y evidencias
+S3_REGION=us-east-1
+S3_BUCKET=
+S3_ENDPOINT=
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+S3_FORCE_PATH_STYLE=false
+S3_SIGNED_URL_TTL_SECONDS=300
 ```
 
-`PORT` opcional (default `3001`). `.env` y `.env.local` están en `.gitignore`.
+`PORT` opcional (default `3017`). `.env` y `.env.local` están en `.gitignore`.
 
 ## Arranque
 
@@ -58,22 +74,52 @@ Sin DB el servidor levanta igual (responde en `/`). El módulo de datos está ap
 
 1. Completa `.env`.
 2. En `src/app.module.ts` descomenta los imports de `DatabaseModule` y `WidgetsModule`.
-3. Genera y corre la migración:
+3. Aplica manualmente el contrato SQL de almacenamiento documental acordado con DBA.
+   Esta implementación no genera ni ejecuta migraciones TypeORM.
+
+Para el flujo de publicaciones, el bucket debe existir y tener versioning y Object Lock
+configurados fuera de la aplicación.
+
+Legal recibe provisioning, cambios de producto y memberships desde RabbitMQ mediante
+`@hemia/event-bus`; no expone un webhook HTTP para eventos de Access. La migración
+`1785727030700_AddEventBusOutboxMetadata` debe ejecutarse manualmente después de aplicar las
+migraciones de tenants. El flujo y los payloads están documentados en
+`docs/legal/event-bus-access-provisioning.md`.
+El estado de la conexión puede consultarse en `GET /health/event-bus`.
+Por ahora los eventos outbound de provisioning se publican directamente; el relay periódico de
+El publisher de outbox debe permanecer activo con `EVENT_BUS_OUTBOX_PUBLISHER_ENABLED=true`.
+
+Las entidades nuevas son `legal_publications`, `legal_publication_assets` y
+`legal_evidence`; también requieren las columnas de contexto y autenticación descritas
+en `docs/almacenamiento_hemia_legal.md`.
+
+No actives el flujo nuevo antes de aplicar ese contrato en PostgreSQL.
+
+Las migraciones existentes del proyecto pueden seguir documentando otros cambios:
 
 ```bash
-bun run --cwd apps/api migration:generate src/database/migrations/CreateWidgets
 bun run --cwd apps/api migration:run
 ```
 
 ## Migraciones
 
 ```bash
-bun run --cwd apps/api migration:generate src/database/migrations/<Nombre>
+bun run --cwd apps/api migration:generate
 bun run --cwd apps/api migration:run
 bun run --cwd apps/api migration:revert
 ```
 
+`migration:generate` usa `src/database/migrations/Migration`; TypeORM genera el prefijo
+timestamp automáticamente.
+
 `synchronize` está en `false`: todo cambio de schema requiere migración.
+
+### E2E y base de datos
+
+Los tests e2e solo pueden ejecutarse contra una base aislada cuyo nombre incluya
+`test` o `e2e` (por ejemplo, `legal_test`). La suite limpia esa base entre casos;
+si detecta la base de desarrollo o producción, se detiene antes de conectarse.
+Configura `E2E_DB_DATABASE` antes de ejecutar `bun run test:e2e`.
 
 ## Tests y build
 

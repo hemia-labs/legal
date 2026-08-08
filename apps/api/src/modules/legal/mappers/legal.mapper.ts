@@ -1,0 +1,231 @@
+import { AuditEvent } from '../entities/audit-event.entity';
+import { LegalAcceptance } from '../entities/legal-acceptance.entity';
+import { LegalAcceptanceRule } from '../entities/legal-acceptance-rule.entity';
+import { LegalApplication } from '../entities/legal-application.entity';
+import { LegalDocument } from '../entities/legal-document.entity';
+import { LegalDocumentVersion } from '../entities/legal-document-version.entity';
+import { LegalEvidence } from '../entities/legal-evidence.entity';
+import { LegalIssuer } from '../entities/legal-issuer.entity';
+import { LegalNotification } from '../entities/legal-notification.entity';
+import { LegalPublication } from '../entities/legal-publication.entity';
+import { LegalPublicationAsset } from '../entities/legal-publication-asset.entity';
+
+export const LegalMapper = {
+  issuer(entity: LegalIssuer) {
+    return {
+      id: entity.id,
+      key: entity.key,
+      name: entity.name,
+      legalName: entity.legalName,
+      type: entity.type,
+      taxId: entity.taxId,
+      countryCode: entity.countryCode,
+      defaultLocale: entity.defaultLocale,
+      status: entity.status,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
+  },
+
+  application(entity: LegalApplication) {
+    return {
+      id: entity.id,
+      issuerId: entity.issuerId,
+      key: entity.key,
+      name: entity.name,
+      status: entity.status,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
+  },
+
+  document(entity: LegalDocument) {
+    return {
+      id: entity.id,
+      issuerId: entity.issuerId,
+      applicationId: entity.applicationId,
+      key: entity.key,
+      documentType: entity.documentType,
+      locale: entity.locale,
+      title: entity.title,
+      status: entity.status,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
+  },
+
+  draft(entity: LegalDocumentVersion) {
+    return {
+      id: entity.id,
+      documentId: entity.documentId,
+      version: entity.version,
+      status: entity.status,
+      contentMarkdown: entity.contentMarkdown,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
+  },
+
+  version(entity: LegalDocumentVersion) {
+    return {
+      id: entity.id,
+      documentId: entity.documentId,
+      version: entity.version,
+      status: entity.status,
+      contentMarkdown: entity.contentMarkdown,
+      contentHtml: entity.contentHtml,
+      contentHash: entity.contentHash,
+      effectiveFrom: entity.effectiveFrom,
+      acceptanceDeadline: entity.acceptanceDeadline,
+      effectiveUntil: entity.effectiveUntil,
+      gracePeriodDays: entity.gracePeriodDays,
+      publishedAt: entity.publishedAt,
+      publishedByIdentityIssuer: entity.publishedByIdentityIssuer,
+      publishedBySubjectId: entity.publishedBySubjectId,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
+  },
+
+  rule(entity: LegalAcceptanceRule) {
+    return {
+      id: entity.id,
+      documentId: entity.documentId,
+      versionId: entity.versionId,
+      issuerId: entity.issuerId,
+      applicationId: entity.applicationId,
+      organizationId: entity.organizationId,
+      productTenantId: entity.productTenantId,
+      role: entity.role,
+      acceptanceMode: entity.acceptanceMode,
+      isBlocking: entity.isBlocking,
+      startsAt: entity.startsAt,
+      endsAt: entity.endsAt,
+      status: entity.status,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
+  },
+
+  acceptance(entity: LegalAcceptance) {
+    return {
+      id: entity.id,
+      issuerId: entity.issuerId,
+      applicationId: entity.applicationId,
+      organizationId: entity.organizationId,
+      productTenantId: entity.productTenantId,
+      identityIssuer: entity.identityIssuer,
+      subjectId: entity.subjectId,
+      documentId: entity.documentId,
+      documentVersionId: entity.documentVersionId,
+      acceptanceRuleId: entity.acceptanceRuleId,
+      acceptedByIdentityIssuer: entity.acceptedByIdentityIssuer,
+      acceptedBySubjectId: entity.acceptedBySubjectId,
+      acceptanceMode: entity.acceptanceMode,
+      roleAtAcceptance: entity.roleAtAcceptance,
+      ipAddress: entity.ipAddress,
+      userAgent: entity.userAgent,
+      sessionId: entity.sessionId,
+      authenticationMethod: entity.authenticationMethod,
+      locale: entity.locale,
+      contentHash: entity.contentHash,
+      acceptedAt: entity.acceptedAt,
+      evidenceMetadata: entity.evidenceMetadata,
+      createdAt: entity.createdAt,
+    };
+  },
+
+  notification(entity: LegalNotification) {
+    return {
+      id: entity.id,
+      sourceEventId: entity.sourceEventId,
+      issuerId: entity.issuerId,
+      applicationId: entity.applicationId,
+      documentId: entity.documentId,
+      documentVersionId: entity.documentVersionId,
+      acceptanceRuleId: entity.acceptanceRuleId,
+      organizationId: entity.organizationId,
+      productTenantId: entity.productTenantId,
+      channel: entity.channel,
+      recipientLogicalId: entity.recipientLogicalId,
+      status: entity.status,
+      attemptCount: entity.attemptCount,
+      lastError: entity.lastError,
+      nextRunAt: entity.nextRunAt,
+      sentAt: entity.sentAt,
+      metadata: entity.metadata,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
+  },
+
+  auditEvent(entity: AuditEvent) {
+    return {
+      id: entity.id,
+      issuerId: entity.issuerId,
+      applicationId: entity.applicationId,
+      traceId: entity.traceId,
+      actorIdentityIssuer: entity.actorIdentityIssuer,
+      actorSubjectId: entity.actorSubjectId,
+      actorType: entity.actorType,
+      action: entity.action,
+      entityType: entity.entityType,
+      entityId: entity.entityId,
+      metadata: entity.metadata,
+      createdAt: entity.createdAt,
+    };
+  },
+
+  publication(entity: LegalPublication) {
+    return {
+      id: entity.id,
+      documentId: entity.documentId,
+      documentVersionId: entity.documentVersionId,
+      version: entity.version,
+      status: entity.status,
+      documentType: entity.documentType,
+      productId: entity.productId,
+      organizationId: entity.organizationId,
+      productTenantId: entity.productTenantId,
+      effectiveFrom: entity.effectiveFrom,
+      effectiveUntil: entity.effectiveUntil,
+      publishedAt: entity.publishedAt,
+      failureReason: entity.failureReason,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
+  },
+
+  publicationAsset(entity: LegalPublicationAsset) {
+    return {
+      id: entity.id,
+      publicationId: entity.publicationId,
+      kind: entity.kind,
+      bucket: entity.s3Bucket,
+      key: entity.s3ObjectKey,
+      versionId: entity.s3VersionId,
+      contentType: entity.contentType,
+      size: entity.sizeBytes,
+      sha256: entity.sha256,
+      createdAt: entity.createdAt,
+    };
+  },
+
+  evidence(entity: LegalEvidence) {
+    return {
+      id: entity.id,
+      acceptanceId: entity.acceptanceId,
+      documentVersionId: entity.documentVersionId,
+      status: entity.status,
+      bucket: entity.s3Bucket,
+      key: entity.s3ObjectKey,
+      versionId: entity.s3VersionId,
+      contentType: entity.contentType,
+      size: entity.sizeBytes,
+      sha256: entity.sha256,
+      failureReason: entity.failureReason,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt,
+    };
+  },
+};

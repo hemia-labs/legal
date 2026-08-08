@@ -2,7 +2,6 @@
 
 Frontend del monorepo `nextjs-nestjs`. Plantilla Next.js (App Router) con Tailwind v4 y shadcn.
 
-
 ## Stack
 
 - **Next.js 16** — App Router, React Server Components.
@@ -38,7 +37,7 @@ Aliases: `@/components`, `@/components/ui`, `@/lib`, `@/lib/utils`, `@/hooks`.
 
 ```bash
 bun install
-bun run --cwd apps/web dev      # http://localhost:3000
+bun run --cwd apps/web dev      # http://localhost:5180
 ```
 
 ## Scripts

@@ -1,10 +1,89 @@
-import { LayoutDashboard, FileText, Users, Settings } from "lucide-react";
+import {
+  Bell,
+  BookOpen,
+  CheckCircle2,
+  ClipboardList,
+  FileText,
+  LifeBuoy,
+  MessageSquare,
+  Settings,
+} from "lucide-react";
+
+export const mainNav = [
+  {
+    href: "/documents",
+    label: "Documentos",
+    icon: FileText,
+    empty: "Aún no hay documentos en esta organización.",
+  },
+  {
+    href: "/acceptances",
+    label: "Aceptaciones",
+    icon: CheckCircle2,
+    empty: "Aún no hay aceptaciones registradas.",
+  },
+  {
+    href: "/notifications",
+    label: "Notificaciones",
+    icon: Bell,
+    empty: "Aún no hay notificaciones legales.",
+  },
+  {
+    href: "/audit",
+    label: "Auditoría",
+    icon: ClipboardList,
+    empty: "Aún no hay eventos de auditoría.",
+  },
+];
+
+export const adminNav = [
+  {
+    href: "/catalogs",
+    label: "Catálogos",
+    icon: BookOpen,
+    empty: "Aún no hay emisores ni aplicaciones configurados.",
+    children: [
+      {
+        href: "/catalogs/issuers",
+        label: "Emisores legales",
+        tab: "issuers",
+        createLabel: "Nuevo emisor",
+        editLabel: "Editar emisor",
+      },
+      {
+        href: "/catalogs/applications",
+        label: "Aplicaciones",
+        tab: "applications",
+      },
+    ],
+  },
+];
+
+export const supportNav = [
+  {
+    href: "/feedback",
+    label: "Feedback",
+    icon: MessageSquare,
+    empty: "Aún no hay canales de feedback configurados.",
+  },
+  {
+    href: "/help",
+    label: "Ayuda y soporte",
+    icon: LifeBuoy,
+    empty: "La documentación de soporte estará disponible próximamente.",
+  },
+  {
+    href: "/settings",
+    label: "Configuración",
+    icon: Settings,
+    empty: "Aún no hay preferencias adicionales para configurar.",
+  },
+];
 
 export const nav = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/documents", label: "Documentos", icon: FileText },
-  { href: "/team", label: "Equipo", icon: Users },
-  { href: "/settings", label: "Ajustes", icon: Settings },
+  ...mainNav,
+  ...adminNav.map(({ href, label, icon, empty }) => ({ href, label, icon, empty })),
+  ...supportNav,
 ];
 
 export function labelFor(pathname: string) {
@@ -12,4 +91,34 @@ export function labelFor(pathname: string) {
     .filter((n) => (n.href === "/" ? pathname === "/" : pathname.startsWith(n.href)))
     .sort((a, b) => b.href.length - a.href.length)[0];
   return match?.label ?? "Sección";
+}
+
+type Breadcrumb = {
+  label: string;
+  href?: string;
+};
+
+export function breadcrumbsFor(pathname: string): Breadcrumb[] {
+  const group = adminNav.find(({ href }) => pathname.startsWith(href));
+
+  if (!group) return [{ label: labelFor(pathname) }];
+
+  const child = group.children.find(
+    ({ href }) => pathname === href || pathname.startsWith(`${href}/`),
+  );
+
+  const breadcrumbs: Breadcrumb[] = [
+    { label: group.label, href: group.children[0].href },
+  ];
+
+  if (!child) return breadcrumbs;
+  if (pathname === child.href) return [...breadcrumbs, { label: child.label }];
+
+  breadcrumbs.push({ label: child.label, href: child.href });
+  if (pathname.endsWith("/new") && "createLabel" in child && child.createLabel) {
+    breadcrumbs.push({ label: child.createLabel });
+  } else if (pathname.endsWith("/edit") && "editLabel" in child && child.editLabel) {
+    breadcrumbs.push({ label: child.editLabel });
+  }
+  return breadcrumbs;
 }
