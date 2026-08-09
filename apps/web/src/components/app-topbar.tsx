@@ -26,7 +26,7 @@ export function AppTopbar({
         onClick={onSidebarToggle}
         aria-label={sidebarCollapsed ? "Expandir menú" : "Colapsar menú"}
         aria-expanded={!sidebarCollapsed}
-        className="absolute left-0 top-1/2 z-30 hidden size-9 -translate-x-1/2 -translate-y-1/2 place-items-center text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 md:grid"
+        className="absolute left-0 top-1/2 z-30 hidden size-9 -translate-x-1/2 -translate-y-1/2 place-items-center text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring md:grid"
       >
         {sidebarCollapsed ? (
           <PanelRight className="size-4" />
@@ -35,17 +35,17 @@ export function AppTopbar({
         )}
       </button>
       <nav aria-label="Ruta actual" className="flex min-w-0 items-center gap-3 text-sm">
-        <LayoutGrid className="size-4 shrink-0 text-hemia-500" />
-        <Link href="/" className="hidden text-hemia-500 hover:text-foreground sm:inline">
+        <LayoutGrid className="size-4 shrink-0 text-muted-foreground" />
+        <Link href="/" className="hidden text-muted-foreground hover:text-foreground sm:inline">
           Hemia
         </Link>
         {breadcrumbs.map(({ label, href }, index) => (
           <Fragment key={label}>
-            <span className={index === 0 ? "hidden text-hemia-300 sm:inline" : "text-hemia-300"}>
+            <span className={index === 0 ? "hidden text-muted-foreground sm:inline" : "text-muted-foreground"}>
               /
             </span>
             {href ? (
-              <Link href={href} className="text-hemia-500 hover:text-foreground">
+              <Link href={href} className="text-muted-foreground hover:text-foreground">
                 {label}
               </Link>
             ) : (
@@ -67,7 +67,7 @@ export function AppTopbar({
           href="/settings"
           aria-label="Configuración legal"
           title="Configuración legal"
-          className="grid size-9 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="grid size-9 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring"
         >
           <Settings className="size-4" />
         </Link>

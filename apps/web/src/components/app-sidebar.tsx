@@ -5,21 +5,21 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Bell,
   ChevronDown,
   ChevronsUpDown,
   CircleHelp,
   LogOut,
-  Moon,
   Search,
   Settings,
-  Sun,
+  SlidersHorizontal,
+  UserRound,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -112,14 +112,14 @@ export function AppSidebar({
       </div>
       {!collapsed && (
         <div className="relative mx-3 my-3">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-hemia-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Buscar..."
             aria-label="Buscar en la navegación"
-            className="bg-card pl-9 shadow-xs dark:border-hemia-700 dark:bg-sidebar-accent"
+            className="bg-card pl-9 shadow-xs dark:bg-sidebar-accent"
           />
         </div>
       )}
@@ -130,7 +130,7 @@ export function AppSidebar({
         )}
       >
         {!collapsed && !!visibleMainNav.length && (
-          <p className="mb-2 px-4 pt-1 text-2xs font-semibold uppercase tracking-wider text-hemia-400 dark:text-hemia-500">
+          <p className="mb-2 px-4 pt-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             Navegación principal
           </p>
         )}
@@ -145,7 +145,7 @@ export function AppSidebar({
           ))}
         </nav>
         {!collapsed && !!visibleAdminNav.length && (
-          <p className="mb-2 mt-6 px-4 text-2xs font-semibold uppercase tracking-wider text-hemia-400 dark:text-hemia-500">
+          <p className="mb-2 mt-6 px-4 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             Administración
           </p>
         )}
@@ -163,11 +163,11 @@ export function AppSidebar({
           !visibleMainNav.length &&
           !visibleAdminNav.length &&
           !visibleSupportNav.length && (
-          <p className="px-6 py-4 text-xs text-hemia-500">Sin resultados</p>
+          <p className="px-6 py-4 text-xs text-muted-foreground">Sin resultados</p>
           )}
         <div className="flex-1" />
         {!collapsed && !!visibleSupportNav.length && (
-          <p className="mb-2 mt-6 px-4 text-2xs font-semibold uppercase tracking-wider text-hemia-400 dark:text-hemia-500">
+          <p className="mb-2 mt-6 px-4 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             Soporte
           </p>
         )}
@@ -190,7 +190,7 @@ export function AppSidebar({
                 type="button"
                 aria-label="Abrir menú de usuario"
                 className={cn(
-                  "flex min-h-12 w-full items-center gap-3 rounded-lg border border-sidebar-border bg-card px-2 shadow-xs outline-none hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-sidebar-ring/50",
+                  "flex min-h-12 w-full items-center gap-3 rounded-md border border-sidebar-border bg-card px-2 shadow-xs outline-none hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-sidebar-ring",
                   collapsed && "justify-center px-0",
                 )}
                 title={collapsed ? userName : undefined}
@@ -221,45 +221,51 @@ export function AppSidebar({
             side="top"
             align="start"
             sideOffset={8}
-            className="w-64 rounded-xl border border-surface-line p-1.5 shadow-lg"
+            className="w-[20rem]"
           >
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="px-2.5 py-2">
-                <span className="block truncate text-sm font-semibold text-foreground">
-                  {userName}
-                </span>
+            <div className="mb-1 flex min-h-16 items-center gap-3 rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-surface-soft text-sm font-semibold text-foreground">
+                {getInitials(userName)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-foreground">{userName}</p>
                 {session.user.email && (
-                  <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
-                    {session.user.email}
-                  </span>
+                  <p className="truncate text-xs text-muted-foreground">{session.user.email}</p>
                 )}
-              </DropdownMenuLabel>
+              </div>
+            </div>
+
+            <DropdownMenuGroup>
               <DropdownMenuItem
                 render={<Link href="/settings" />}
-                className="min-h-9 gap-3 px-2.5"
+                className="h-9 gap-3 px-3"
               >
-                <Settings className="size-4" />
-                Configuración
+                <UserRound className="size-4 text-muted-foreground" />
+                Tu perfil
               </DropdownMenuItem>
               <DropdownMenuItem
-                render={<Link href="/help" />}
-                className="min-h-9 gap-3 px-2.5"
+                render={<Link href="/settings" />}
+                className="h-9 gap-3 px-3"
               >
-                <CircleHelp className="size-4" />
-                Ayuda y soporte
+                <SlidersHorizontal className="size-4 text-muted-foreground" />
+                Preferencias
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                render={<Link href="/notifications" />}
+                className="h-9 gap-3 px-3"
+              >
+                <Bell className="size-4 text-muted-foreground" />
+                Notificaciones
+                <span className="ml-auto size-2 rounded-full bg-primary" aria-label="Activas" />
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <div className="flex min-h-10 items-center gap-2 rounded-md px-2.5 text-sm">
-              <Sun
-                className={cn("size-4", dark ? "text-muted-foreground" : "text-primary")}
-                aria-hidden="true"
-              />
-              <Moon
-                className={cn("size-4", dark ? "text-primary" : "text-muted-foreground")}
-                aria-hidden="true"
-              />
-              <span className="ml-1">{dark ? "Tema oscuro" : "Tema claro"}</span>
+            <div className="flex h-9 items-center gap-3 rounded-md px-3 text-sm">
+              <Settings className="size-4 text-muted-foreground" aria-hidden="true" />
+              <span>Tema</span>
+              <span className="ml-auto text-sm text-muted-foreground">
+                {dark ? "Oscuro" : "Claro"}
+              </span>
               <button
                 type="button"
                 role="switch"
@@ -267,7 +273,7 @@ export function AppSidebar({
                 aria-label={dark ? "Cambiar a tema claro" : "Cambiar a tema oscuro"}
                 onClick={toggleTheme}
                 className={cn(
-                  "ml-auto flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+                  "flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring",
                   dark ? "bg-primary" : "bg-muted-foreground/35",
                 )}
               >
@@ -280,11 +286,28 @@ export function AppSidebar({
               </button>
             </div>
             <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                render={<Link href="/help" />}
+                className="h-9 gap-3 px-3"
+              >
+                <CircleHelp className="size-4 text-muted-foreground" />
+                Ayuda y soporte
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                render={<Link href="/settings" />}
+                className="h-9 gap-3 px-3"
+              >
+                <Settings className="size-4 text-muted-foreground" />
+                Configuración
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
               disabled={loggingOut}
               onClick={() => void handleLogout()}
-              className="min-h-9 gap-3 px-2.5"
+              className="h-9 gap-3 px-3"
             >
               <LogOut className="size-4" />
               {loggingOut ? "Cerrando sesión..." : "Cerrar sesión"}
@@ -323,7 +346,7 @@ function SidebarNavGroup({
               aria-label={item.label}
               title={item.label}
               className={cn(
-                "flex h-9 w-full items-center justify-center rounded-lg transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring/50",
+                "flex h-9 w-full items-center justify-center rounded-md transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring",
                 active
                   ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm shadow-hemia-royal/20"
                   : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
@@ -331,7 +354,7 @@ function SidebarNavGroup({
             />
           }
         >
-          <Icon className={cn("size-4", !active && "text-hemia-500 dark:text-hemia-400")} />
+          <Icon className={cn("size-4", !active && "text-hemia-500 dark:text-muted-foreground")} />
         </DropdownMenuTrigger>
         <DropdownMenuContent side="right" align="start" sideOffset={8} className="w-52">
           {item.children.map((child) => (
@@ -348,13 +371,13 @@ function SidebarNavGroup({
     <details open={active || undefined} className="group">
       <summary
         className={cn(
-          "flex h-9 cursor-pointer list-none items-center gap-3 rounded-lg px-3 text-[13px] font-medium transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring/50 [&::-webkit-details-marker]:hidden",
+          "flex h-9 cursor-pointer list-none items-center gap-3 rounded-md px-3 text-[13px] font-medium transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring [&::-webkit-details-marker]:hidden",
           active
             ? "text-sidebar-accent-foreground"
             : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
         )}
       >
-        <Icon className={cn("size-4 shrink-0", active ? "text-primary" : "text-hemia-500 dark:text-hemia-400")} />
+        <Icon className={cn("size-4 shrink-0", active ? "text-primary" : "text-hemia-500 dark:text-muted-foreground")} />
         <span className="flex-1">{item.label}</span>
         <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
       </summary>
@@ -368,7 +391,7 @@ function SidebarNavGroup({
             key={child.href}
             href={child.href}
             className={cn(
-              "relative flex h-9 items-center rounded-lg px-3 text-[13px] font-medium transition-colors before:absolute before:-left-4 before:top-0 before:h-1/2 before:w-3 before:rounded-bl-md before:border-b before:border-l before:border-sidebar-border focus-visible:ring-3 focus-visible:ring-sidebar-ring/50",
+              "relative flex h-9 items-center rounded-md px-3 text-[13px] font-medium transition-colors before:absolute before:-left-4 before:top-0 before:h-1/2 before:w-3 before:rounded-bl-md before:border-b before:border-l before:border-sidebar-border focus-visible:ring-3 focus-visible:ring-sidebar-ring",
               pathname === child.href || pathname.startsWith(`${child.href}/`)
                 ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm shadow-hemia-royal/20"
                 : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
@@ -398,7 +421,7 @@ function SidebarNavItem({
       href={href}
       title={collapsed ? label : undefined}
       className={cn(
-        "flex h-9 items-center gap-3 rounded-lg text-[13px] font-medium transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring/50",
+        "flex h-9 items-center gap-3 rounded-md text-[13px] font-medium transition-colors focus-visible:ring-3 focus-visible:ring-sidebar-ring",
         collapsed ? "justify-center px-0" : "px-3",
         active
           ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm shadow-hemia-royal/20"
@@ -408,7 +431,7 @@ function SidebarNavItem({
       <Icon
         className={cn(
           "size-4 shrink-0",
-          !active && "text-hemia-500 dark:text-hemia-400",
+          !active && "text-hemia-500 dark:text-muted-foreground",
         )}
       />
       <span className={cn(collapsed && "sr-only")}>{label}</span>

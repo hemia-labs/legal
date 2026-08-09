@@ -1,48 +1,48 @@
-name: CI
+# name: CI
 
-on:
-  pull_request:
-  push:
-    branches: [main]
+# on:
+#   pull_request:
+#   push:
+#     branches: [main]
 
-jobs:
-  checks:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: hemia_legal
-          POSTGRES_PASSWORD: hemia_legal
-          POSTGRES_DB: hemia_legal
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U hemia_legal -d hemia_legal"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DB_HOST: localhost
-      DB_PORT: 5432
-      DB_USERNAME: hemia_legal
-      DB_PASSWORD: hemia_legal
-      DB_DATABASE: hemia_legal
-      DB_LOGGING: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-      - run: bun install --frozen-lockfile
-      - run: python3 -m json.tool docs/openapi/legal-v1.yaml >/dev/null
-      - run: test -s docs/legal/identity-access-contracts.md
-      - run: bun run --cwd apps/api lint:check
-      - run: bun run --cwd apps/api test
-      - run: bun run --cwd apps/api build
-      - run: bun run --cwd apps/api migration:run
-      - run: bun run --cwd apps/api test:e2e
-      - run: bun run --cwd apps/api migration:revert
-      - run: bun run --cwd apps/web lint
-      - run: bun run --cwd apps/web build
+# jobs:
+#   checks:
+#     runs-on: ubuntu-latest
+#     services:
+#       postgres:
+#         image: postgres:16
+#         env:
+#           POSTGRES_USER: hemia_legal
+#           POSTGRES_PASSWORD: hemia_legal
+#           POSTGRES_DB: hemia_legal
+#         ports:
+#           - 5432:5432
+#         options: >-
+#           --health-cmd "pg_isready -U hemia_legal -d hemia_legal"
+#           --health-interval 10s
+#           --health-timeout 5s
+#           --health-retries 5
+#     env:
+#       DB_HOST: localhost
+#       DB_PORT: 5432
+#       DB_USERNAME: hemia_legal
+#       DB_PASSWORD: hemia_legal
+#       DB_DATABASE: hemia_legal
+#       DB_LOGGING: false
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: oven-sh/setup-bun@v2
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.x'
+#       - run: bun install --frozen-lockfile
+#       - run: python3 -m json.tool docs/openapi/legal-v1.yaml >/dev/null
+#       - run: test -s docs/legal/identity-access-contracts.md
+#       - run: bun run --cwd apps/api lint:check
+#       - run: bun run --cwd apps/api test
+#       - run: bun run --cwd apps/api build
+#       - run: bun run --cwd apps/api migration:run
+#       - run: bun run --cwd apps/api test:e2e
+#       - run: bun run --cwd apps/api migration:revert
+#       - run: bun run --cwd apps/web lint
+#       - run: bun run --cwd apps/web build

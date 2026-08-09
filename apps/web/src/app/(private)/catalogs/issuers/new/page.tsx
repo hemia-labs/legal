@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -141,8 +142,9 @@ export default function IssuerForm() {
         </div>
       )}
 
-      <form onSubmit={(event) => void submit(event)} noValidate className="rounded-lg border border-border bg-card shadow-sm">
-        <div className="grid gap-5 p-5 md:grid-cols-2 md:p-6">
+      <form onSubmit={(event) => void submit(event)} noValidate>
+        <Card className="gap-0 rounded-md py-0">
+          <CardContent className="grid gap-5 p-5 md:grid-cols-2 md:p-6">
           <Field
             htmlFor="issuer-name"
             label="Nombre visible"
@@ -318,9 +320,9 @@ export default function IssuerForm() {
               />
             </Field>
           </div>
-        </div>
+          </CardContent>
 
-        <footer className="flex flex-col-reverse gap-3 border-t border-border bg-muted/50 p-4 sm:flex-row sm:justify-end">
+          <CardFooter className="flex flex-col-reverse gap-3 border-t border-border bg-muted/50 p-4 sm:flex-row sm:justify-end">
           <Button
             render={<Link href="/catalogs/issuers" />}
             nativeButton={false}
@@ -334,7 +336,8 @@ export default function IssuerForm() {
             {saving && <LoaderCircle className="size-4 animate-spin" />}
             {saving ? "Creando…" : "Crear emisor"}
           </Button>
-        </footer>
+          </CardFooter>
+        </Card>
       </form>
     </div>
   );

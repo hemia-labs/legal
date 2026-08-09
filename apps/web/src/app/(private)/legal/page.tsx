@@ -605,7 +605,7 @@ export default function LegalPage() {
               <textarea
                 value={draftText}
                 onChange={(event) => setDraftText(event.target.value)}
-                className="min-h-80 rounded-md border border-input bg-card p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className="min-h-80 rounded-md border border-input bg-card p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring"
                 placeholder="# Terminos..."
               />
               <Button
@@ -1120,7 +1120,7 @@ function SelectInput<T extends { id: string }>({
       value={value}
       onChange={(event) => onChange?.(event.target.value)}
       required
-      className="h-12 rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      className="h-12 rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring"
     >
       <option value="">Selecciona...</option>
       {items.map((item) => (

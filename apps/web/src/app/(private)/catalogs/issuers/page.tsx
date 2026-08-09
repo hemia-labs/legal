@@ -19,16 +19,18 @@ import {
   LoaderCircle,
   Pencil,
   Funnel,
-  MoreVertical,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   RotateCcw,
   Scale,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ActionMenu } from "@/components/action-menu";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -42,13 +44,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  DataTable,
+  type DataTableColumn,
+} from "@/components/ui/data-table";
 import {
   Pagination,
   PaginationContent,
@@ -104,6 +102,7 @@ export default function IssuersPage() {
     totalPages: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState<LegalApiError | Error | null>(null);
   const loadedRequest = useRef<string | null>(null);
   const requestVersion = useRef(0);
@@ -142,7 +141,10 @@ export default function IssuersPage() {
       if (version !== requestVersion.current) return;
       setError(cause instanceof Error ? cause : new Error("No se pudieron cargar los emisores."));
     } finally {
-      if (version === requestVersion.current) setLoading(false);
+      if (version === requestVersion.current) {
+        setHasLoadedOnce(true);
+        setLoading(false);
+      }
     }
   }, [query, session, statusFilter, typeFilter]);
 
@@ -153,7 +155,7 @@ export default function IssuersPage() {
     void load(page);
   }, [load, organizationKey, page, query, statusFilter, typeFilter]);
 
-  if (loading) return <IssuersSkeleton />;
+  if (loading && !hasLoadedOnce) return <IssuersSkeleton />;
 
   const permissions = session.permissions;
   const forbidden = error instanceof LegalApiError && error.status === 403;
@@ -194,6 +196,7 @@ export default function IssuersPage() {
       ) : meta.total > 0 || search || query || typeFilter !== "all" ? (
         <IssuerTable
           issuers={issuers}
+          loading={loading}
           canEdit={canEdit}
           canArchive={canArchive}
           search={search}
@@ -239,6 +242,7 @@ export default function IssuersPage() {
 
 function IssuerTable({
   issuers,
+  loading,
   canEdit,
   canArchive,
   search,
@@ -254,6 +258,7 @@ function IssuerTable({
   onArchived,
 }: {
   issuers: Issuer[];
+  loading: boolean;
   canEdit: boolean;
   canArchive: boolean;
   search: string;
@@ -302,12 +307,99 @@ function IssuerTable({
       setArchiveTarget(null);
     } catch (cause) {
       setArchiveError(
-        cause instanceof Error ? cause.message : "No se pudo archivar el emisor.",
+        cause instanceof Error ? cause.message : "No se pudo eliminar el emisor.",
       );
     } finally {
       setArchivingId("");
     }
   }
+
+  const columns: DataTableColumn<Issuer>[] = [
+    {
+      accessorKey: "name",
+      header: "Emisor",
+      cell: ({ row }) => (
+        <>
+          <p className="font-medium text-foreground">{row.original.name}</p>
+          <p className="mt-0.5 max-w-72 truncate text-xs text-muted-foreground">
+            {row.original.legalName}
+          </p>
+        </>
+      ),
+    },
+    {
+      accessorKey: "type",
+      header: "Tipo",
+      cell: ({ row }) => typeNames[row.original.type] ?? row.original.type,
+    },
+    {
+      accessorKey: "key",
+      header: "Clave",
+      cell: ({ row }) => <span className="font-mono text-xs">{row.original.key}</span>,
+    },
+    {
+      accessorKey: "countryCode",
+      header: "Región",
+      cell: ({ row }) => `${row.original.countryCode} · ${row.original.defaultLocale}`,
+    },
+    {
+      accessorKey: "status",
+      header: "Estado",
+      cell: ({ row }) => (
+        <Badge variant={row.original.status === "active" ? "success" : "neutral"}>
+          {row.original.status === "active" ? "Activo" : "Archivado"}
+        </Badge>
+      ),
+    },
+    {
+      accessorKey: "updatedAt",
+      header: "Actualizado",
+      cell: ({ row }) => formatDate(row.original.updatedAt),
+    },
+    {
+      id: "actions",
+      header: () => <span className="sr-only">Acciones</span>,
+      cell: ({ row }) => {
+        const issuer = row.original;
+
+        return (
+          <ActionMenu
+            label={`Acciones para ${issuer.name}`}
+            options={[
+              canEdit && issuer.status === "active"
+                ? {
+                    label: "Editar",
+                    href: `/catalogs/issuers/${issuer.id}/edit`,
+                    icon: <Pencil className="size-4" aria-hidden="true" />,
+                  }
+                : null,
+              {
+                label: "Copiar clave",
+                onSelect: () => void navigator.clipboard.writeText(issuer.key),
+                icon: <Copy className="size-4" aria-hidden="true" />,
+              },
+              {
+                label: "Copiar razón social",
+                onSelect: () => void navigator.clipboard.writeText(issuer.legalName),
+                icon: <Copy className="size-4" aria-hidden="true" />,
+              },
+              canArchive && issuer.status === "active"
+                ? { type: "separator" as const }
+                : null,
+              canArchive && issuer.status === "active"
+                ? {
+                    label: "Eliminar",
+                    destructive: true,
+                    onSelect: () => setArchiveTarget(issuer),
+                    icon: <Trash2 className="size-4" aria-hidden="true" />,
+                  }
+                : null,
+            ]}
+          />
+        );
+      },
+    },
+  ];
 
   return (
     <section className="overflow-hidden rounded-xl border border-surface-line bg-card p-1 shadow-sm">
@@ -325,197 +417,145 @@ function IssuerTable({
             className="pl-9"
           />
         </div>
-        <DropdownMenu
-          open={filtersOpen}
-          onOpenChange={(open) => {
-            if (open) {
-              setDraftStatusFilter(statusFilter);
-              setDraftTypeFilter(typeFilter);
-            }
-            setFiltersOpen(open);
-          }}
-        >
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="outline"
-                className="border-border/70 bg-transparent px-4 text-muted-foreground hover:bg-muted hover:text-foreground"
-              />
-            }
+        <div className="flex items-center gap-2">
+          <DropdownMenu
+            open={filtersOpen}
+            onOpenChange={(open) => {
+              if (open) {
+                setDraftStatusFilter(statusFilter);
+                setDraftTypeFilter(typeFilter);
+              }
+              setFiltersOpen(open);
+            }}
           >
-            <Funnel className="size-4" aria-hidden="true" />
-            Filtros
-            {hasAnyFilters && (
-              <span className="ml-1 inline-flex items-center gap-1">
-                {visibleFilterCount > 0 && (
-                  <Badge variant="secondary">{visibleFilterCount}</Badge>
-                )}
-                <span
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Limpiar filtros"
-                  className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    clearFilters();
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="outline"
+                  className="border-border/70 bg-transparent px-4 text-muted-foreground hover:bg-muted hover:text-foreground"
+                />
+              }
+            >
+              <Funnel className="size-4" aria-hidden="true" />
+              Filtros
+              {hasAnyFilters && (
+                <span className="ml-1 inline-flex items-center gap-1">
+                  {visibleFilterCount > 0 && (
+                    <Badge variant="secondary">{visibleFilterCount}</Badge>
+                  )}
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Limpiar filtros"
+                    className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
                       event.stopPropagation();
                       clearFilters();
-                    }
-                  }}
-                >
-                  <X className="size-3.5" aria-hidden="true" />
-                </span>
-              </span>
-            )}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuRadioGroup
-              value={draftStatusFilter}
-              onValueChange={setDraftStatusFilter}
-            >
-              <DropdownMenuLabel>Estado</DropdownMenuLabel>
-              <DropdownMenuRadioItem value="active" closeOnClick={false}>
-                Activos
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="archived" closeOnClick={false}>
-                Archivados
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuRadioGroup
-              value={draftTypeFilter}
-              onValueChange={setDraftTypeFilter}
-            >
-              <DropdownMenuLabel>Tipo</DropdownMenuLabel>
-              <DropdownMenuRadioItem value="all" closeOnClick={false}>
-                Todos
-              </DropdownMenuRadioItem>
-              {Object.entries(typeNames).map(([value, label]) => (
-                <DropdownMenuRadioItem key={value} value={value} closeOnClick={false}>
-                  {label}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={!hasAnyFilters}
-              onClick={clearFilters}
-            >
-              <RotateCcw className="size-4" aria-hidden="true" />
-              Limpiar filtros
-            </DropdownMenuItem>
-            <Button
-              className="mt-2 w-full disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
-              disabled={!hasPendingFilterChanges}
-              onClick={() => {
-                onApplyFilters(draftStatusFilter, draftTypeFilter);
-                setFiltersOpen(false);
-              }}
-            >
-              Aplicar filtros
-            </Button>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      <div className="pt-3">
-        <Table className="[&_thead_th:first-child]:rounded-l-lg [&_thead_th:last-child]:rounded-r-lg">
-        <TableHeader className="bg-transparent [&_tr]:border-0">
-          <TableRow className="border-0 bg-surface-soft hover:bg-surface-soft even:bg-surface-soft">
-            <TableHead className="h-10 px-4 normal-case">Emisor</TableHead>
-            <TableHead className="h-10 px-4 normal-case">Tipo</TableHead>
-            <TableHead className="h-10 px-4 normal-case">Clave</TableHead>
-            <TableHead className="h-10 px-4 normal-case">Región</TableHead>
-            <TableHead className="h-10 px-4 normal-case">Estado</TableHead>
-            <TableHead className="h-10 px-4 normal-case">Actualizado</TableHead>
-            <TableHead className="h-10 w-12 px-2 text-right normal-case">
-              <span className="sr-only">Acciones</span>
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {issuers.length ? issuers.map((issuer) => (
-            <TableRow
-              key={issuer.id}
-              className="border-surface-line bg-card even:bg-card hover:bg-surface-soft/60"
-            >
-              <TableCell className="px-4 py-3">
-                <p className="font-medium text-foreground">{issuer.name}</p>
-                <p className="mt-0.5 max-w-72 truncate text-xs text-muted-foreground">
-                  {issuer.legalName}
-                </p>
-              </TableCell>
-              <TableCell className="px-4 py-3">{typeNames[issuer.type] ?? issuer.type}</TableCell>
-              <TableCell className="px-4 py-3 font-mono text-xs">{issuer.key}</TableCell>
-              <TableCell className="px-4 py-3">
-                {issuer.countryCode} · {issuer.defaultLocale}
-              </TableCell>
-              <TableCell className="px-4 py-3">
-                <Badge variant={issuer.status === "active" ? "success" : "neutral"}>
-                  {issuer.status === "active" ? "Activo" : "Archivado"}
-                </Badge>
-              </TableCell>
-              <TableCell className="px-4 py-3">{formatDate(issuer.updatedAt)}</TableCell>
-              <TableCell className="w-12 px-1 py-1 text-right">
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="size-8"
-                        aria-label={`Acciones para ${issuer.name}`}
-                      />
-                    }
-                  >
-                    <MoreVertical className="size-4" aria-hidden="true" />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    {canEdit && issuer.status === "active" && (
-                      <DropdownMenuItem
-                        render={<Link href={`/catalogs/issuers/${issuer.id}/edit`} />}
-                      >
-                        <Pencil className="size-4" aria-hidden="true" />
-                        Editar emisor
-                      </DropdownMenuItem>
-                    )}
-                    {canArchive && issuer.status === "active" && (
-                      <DropdownMenuItem onClick={() => setArchiveTarget(issuer)}>
-                        <Archive className="size-4" aria-hidden="true" />
-                        Archivar emisor
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem
-                      onClick={() => void navigator.clipboard.writeText(issuer.key)}
-                    >
-                      <Copy className="size-4" aria-hidden="true" />
-                      Copiar clave
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() =>
-                        void navigator.clipboard.writeText(issuer.legalName)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        clearFilters();
                       }
-                    >
-                      <Copy className="size-4" aria-hidden="true" />
-                      Copiar razón social
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </TableCell>
-            </TableRow>
-          )) : (
-            <TableRow className="bg-card hover:bg-card even:bg-card">
-              <TableCell colSpan={7} className="h-24 px-4 py-3 text-center text-sm text-muted-foreground">
-                No hay emisores que coincidan con la búsqueda o filtros.
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-        </Table>
+                    }}
+                  >
+                    <X className="size-3.5" aria-hidden="true" />
+                  </span>
+                </span>
+              )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuRadioGroup
+                value={draftStatusFilter}
+                onValueChange={setDraftStatusFilter}
+              >
+                <DropdownMenuLabel>Estado</DropdownMenuLabel>
+                <DropdownMenuRadioItem value="active" closeOnClick={false}>
+                  Activos
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="archived" closeOnClick={false}>
+                  Archivados
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuRadioGroup
+                value={draftTypeFilter}
+                onValueChange={setDraftTypeFilter}
+              >
+                <DropdownMenuLabel>Tipo</DropdownMenuLabel>
+                <DropdownMenuRadioItem value="all" closeOnClick={false}>
+                  Todos
+                </DropdownMenuRadioItem>
+                {Object.entries(typeNames).map(([value, label]) => (
+                  <DropdownMenuRadioItem key={value} value={value} closeOnClick={false}>
+                    {label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                disabled={!hasAnyFilters}
+                onClick={clearFilters}
+              >
+                <RotateCcw className="size-4" aria-hidden="true" />
+                Limpiar filtros
+              </DropdownMenuItem>
+              <Button
+                className="mt-2 w-full disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+                disabled={!hasPendingFilterChanges}
+                onClick={() => {
+                  onApplyFilters(draftStatusFilter, draftTypeFilter);
+                  setFiltersOpen(false);
+                }}
+              >
+                Aplicar filtros
+              </Button>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Más opciones de emisores"
+                  className="border-border/70 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
+                />
+              }
+            >
+              <MoreHorizontal className="size-4" aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem
+                onClick={() => {
+                  setDraftStatusFilter("archived");
+                  onApplyFilters("archived", typeFilter);
+                }}
+                disabled={statusFilter === "archived"}
+              >
+                <Archive className="size-4" aria-hidden="true" />
+                Ver emisores archivados
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      <div className="relative px-2 pt-3 pb-3" aria-busy={loading}>
+        {loading && (
+          <div className="pointer-events-none absolute inset-3 z-10 grid min-h-48 place-items-center bg-card/70">
+            <span className="flex items-center gap-2 rounded-md bg-card px-3 py-2 text-sm text-muted-foreground shadow-sm">
+              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+              Actualizando emisores…
+            </span>
+          </div>
+        )}
+        <DataTable
+          columns={columns}
+          data={issuers}
+          emptyMessage="No hay emisores que coincidan con la búsqueda o filtros."
+        />
       </div>
       <footer className="flex flex-col gap-3 border-t border-surface-line p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <p>
@@ -523,7 +563,7 @@ function IssuerTable({
             ? `Mostrando ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} de ${total} ${total === 1 ? "emisor" : "emisores"}`
             : "Sin resultados"}
         </p>
-        {totalPages > 1 && (
+        {totalPages > 0 && (
           <Pagination className="mx-0 w-auto sm:justify-end">
             <PaginationContent>
               <PaginationItem>
@@ -562,9 +602,9 @@ function IssuerTable({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogMedia className="text-destructive">
-              <Archive className="size-5" aria-hidden="true" />
+              <Trash2 className="size-5" aria-hidden="true" />
             </AlertDialogMedia>
-            <AlertDialogTitle>Archivar emisor</AlertDialogTitle>
+            <AlertDialogTitle>Eliminar emisor</AlertDialogTitle>
             <AlertDialogDescription>
               “{archiveTarget?.name}” dejará de estar disponible para nuevas operaciones. Sus datos e historial se conservarán.
             </AlertDialogDescription>
@@ -584,7 +624,7 @@ function IssuerTable({
               onClick={() => void archiveIssuer()}
             >
               {archivingId && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
-              {archivingId ? "Archivando…" : "Archivar"}
+              {archivingId ? "Eliminando…" : "Eliminar"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

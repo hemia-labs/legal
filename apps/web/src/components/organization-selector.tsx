@@ -106,7 +106,7 @@ function SelectorInput({
       {...props}
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="h-9 max-w-56 rounded-md border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+      className="h-9 max-w-56 rounded-md border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring"
     >
       {!value && <option value="">Selecciona organización…</option>}
       {organizations.map((organization) => (
