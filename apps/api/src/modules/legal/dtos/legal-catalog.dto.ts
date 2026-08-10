@@ -108,6 +108,11 @@ export class UpdateIssuerDto {
   defaultLocale?: string;
 }
 
+export class UpdateIssuerStatusDto {
+  @IsIn(['active', 'inactive'])
+  status: 'active' | 'inactive';
+}
+
 export class IssuerFilterDto {
   @IsOptional()
   @Type(() => Number)
@@ -133,7 +138,7 @@ export class IssuerFilterDto {
   type?: string;
 
   @IsOptional()
-  @IsIn(['active', 'archived'])
+  @IsIn(['active', 'inactive', 'archived'])
   status?: string;
 
   @IsOptional()
@@ -159,16 +164,48 @@ export class CreateApplicationDto {
 
 export class UpdateApplicationDto {
   @IsOptional()
+  @IsUUID()
+  issuerId?: string;
+
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(160)
   name?: string;
 }
 
+export class UpdateApplicationStatusDto {
+  @IsIn(['active', 'inactive'])
+  status: 'active' | 'inactive';
+}
+
 export class ApplicationFilterDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit = 10;
+
   @IsOptional()
   @IsUUID()
   issuerId?: string;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(160)
+  search?: string;
+
+  @IsOptional()
+  @IsIn(['active', 'inactive', 'archived', 'all'])
+  status?: string;
 }
 
 export class CreateDocumentDto {

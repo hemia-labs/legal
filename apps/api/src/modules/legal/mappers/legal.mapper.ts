@@ -34,6 +34,15 @@ export const LegalMapper = {
       key: entity.key,
       name: entity.name,
       status: entity.status,
+      ...(entity.issuer
+        ? {
+            issuer: {
+              id: entity.issuer.id,
+              name: entity.issuer.name,
+              status: entity.issuer.status,
+            },
+          }
+        : {}),
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
     };

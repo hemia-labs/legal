@@ -73,6 +73,11 @@ type Application = {
   status: string;
 };
 
+type ApplicationListResponse = {
+  items: Application[];
+  meta: { page: number; limit: number; total: number; totalPages: number };
+};
+
 type LegalDocument = {
   id: string;
   issuerId: string;
@@ -124,7 +129,7 @@ export default function DocumentsPage() {
     try {
       if (!hasPermission(session.permissions, "legal.documents.view")) return;
 
-      const [issuerResponse, applicationRows, documentRows] = await Promise.all([
+      const [issuerResponse, applicationResponse, documentRows] = await Promise.all([
         hasPermission(session.permissions, "legal.issuers.view")
           ? legalApi<IssuerListResponse>("/v1/legal/issuers?limit=100")
           : Promise.resolve({
@@ -132,12 +137,15 @@ export default function DocumentsPage() {
               meta: { page: 1, limit: 100, total: 0, totalPages: 0 },
             } as IssuerListResponse),
         hasPermission(session.permissions, "legal.applications.view")
-          ? legalApi<Application[]>("/v1/legal/applications")
-          : Promise.resolve([]),
+          ? legalApi<ApplicationListResponse>("/v1/legal/applications?limit=100&status=active")
+          : Promise.resolve({
+              items: [],
+              meta: { page: 1, limit: 100, total: 0, totalPages: 0 },
+            } as ApplicationListResponse),
         legalApi<LegalDocument[]>("/v1/legal/documents"),
       ]);
       setIssuers(issuerResponse.items);
-      setApplications(applicationRows);
+      setApplications(applicationResponse.items);
       setDocuments(documentRows);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudieron cargar los documentos.");

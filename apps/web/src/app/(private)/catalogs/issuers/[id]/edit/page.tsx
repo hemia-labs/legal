@@ -149,7 +149,6 @@ export default function EditIssuerPage() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase text-eyebrow">Catálogo de emisores</p>
           <h1 className="mt-1 text-2xl font-bold text-heading">Editar emisor legal</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Actualiza los datos que identifican a esta entidad responsable.

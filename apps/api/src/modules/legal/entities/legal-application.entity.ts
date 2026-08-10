@@ -1,6 +1,7 @@
 import {
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   Entity,
   Index,
   JoinColumn,
@@ -13,6 +14,7 @@ import { LegalIssuer } from './legal-issuer.entity';
 @Entity('applications')
 @Index('IDX_legal_applications_issuer_key_unique', ['issuerId', 'key'], {
   unique: true,
+  where: '"deleted_at" IS NULL',
 })
 export class LegalApplication {
   @PrimaryGeneratedColumn('uuid')
@@ -39,4 +41,7 @@ export class LegalApplication {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deletedAt: Date | null;
 }

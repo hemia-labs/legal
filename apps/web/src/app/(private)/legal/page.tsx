@@ -76,6 +76,11 @@ type Application = {
   status: Status;
 };
 
+type ApplicationListResponse = {
+  items: Application[];
+  meta: { page: number; limit: number; total: number; totalPages: number };
+};
+
 type Document = {
   id: string;
   issuerId: string;
@@ -178,13 +183,13 @@ export default function LegalPage() {
     setLoading(true);
     setError("");
     try {
-      const [issuerResponse, applicationRows, documentRows] = await Promise.all([
+      const [issuerResponse, applicationResponse, documentRows] = await Promise.all([
         api<IssuerListResponse>(apiUrl, "/issuers?limit=100"),
-        api<Application[]>(apiUrl, "/applications"),
+        api<ApplicationListResponse>(apiUrl, "/applications?limit=100&status=active"),
         api<Document[]>(apiUrl, "/documents"),
       ]);
       setIssuers(issuerResponse.items);
-      setApplications(applicationRows);
+      setApplications(applicationResponse.items);
       setDocuments(documentRows);
       setSelectedDocumentId((current) => current || documentRows[0]?.id || "");
       setAcceptances(await api<Acceptance[]>(apiUrl, "/me/acceptances"));

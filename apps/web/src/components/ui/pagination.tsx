@@ -41,7 +41,7 @@ function PaginationLink({
       data-active={isActive || undefined}
       className={cn(
         "inline-flex h-9 min-w-9 items-center justify-center rounded-md border border-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none hover:bg-muted focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
-        isActive && "border-border bg-background text-primary shadow-sm",
+        isActive && "border-border bg-background text-foreground shadow-sm",
         className,
       )}
       {...props}

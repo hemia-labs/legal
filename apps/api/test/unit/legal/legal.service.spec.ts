@@ -163,6 +163,144 @@ describe('LegalService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it('allows changing an application issuer before documents exist', async () => {
+    const originalIssuer = await service.createIssuer(
+      issuerDto('issuer_original', 'Original'),
+      actor,
+    );
+    const targetIssuer = await service.createIssuer(
+      issuerDto('issuer_target', 'Target'),
+      actor,
+    );
+    const application = await service.createApplication(
+      { issuerId: originalIssuer.id, key: 'portal', name: 'Portal' },
+      actor,
+    );
+
+    const updated = await service.updateApplication(
+      application.id,
+      { issuerId: targetIssuer.id },
+      actor,
+    );
+
+    expect(updated.issuerId).toBe(targetIssuer.id);
+  });
+
+  it('blocks changing an application issuer after documents exist', async () => {
+    const originalIssuer = await service.createIssuer(
+      issuerDto('issuer_original', 'Original'),
+      actor,
+    );
+    const targetIssuer = await service.createIssuer(
+      issuerDto('issuer_target', 'Target'),
+      actor,
+    );
+    const application = await service.createApplication(
+      { issuerId: originalIssuer.id, key: 'portal', name: 'Portal' },
+      actor,
+    );
+    await service.createDocument(
+      {
+        issuerId: originalIssuer.id,
+        applicationId: application.id,
+        key: 'terms',
+        locale: 'es-MX',
+        title: 'Términos',
+      },
+      actor,
+    );
+
+    await expect(
+      service.updateApplication(
+        application.id,
+        { issuerId: targetIssuer.id },
+        actor,
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('filters and paginates applications with metadata', async () => {
+    const issuer = await service.createIssuer(
+      issuerDto('issuer_applications', 'Applications'),
+      actor,
+    );
+    const otherIssuer = await service.createIssuer(
+      issuerDto('issuer_other', 'Other'),
+      actor,
+    );
+    const archived = await service.createApplication(
+      { issuerId: issuer.id, key: 'archived', name: 'Archived' },
+      actor,
+    );
+    await service.archiveApplication(archived.id, actor);
+    await service.createApplication(
+      { issuerId: issuer.id, key: 'portal', name: 'Portal' },
+      actor,
+    );
+    await service.createApplication(
+      { issuerId: issuer.id, key: 'admin', name: 'Admin' },
+      actor,
+    );
+    await service.createApplication(
+      { issuerId: otherIssuer.id, key: 'other', name: 'Other app' },
+      actor,
+    );
+
+    const response = await service.listApplications({
+      issuerId: issuer.id,
+      status: 'active',
+      page: 2,
+      limit: 1,
+    });
+
+    expect(response.meta).toEqual({
+      page: 2,
+      limit: 1,
+      total: 2,
+      totalPages: 2,
+    });
+    expect(response.items).toHaveLength(1);
+    expect(response.items[0].issuerId).toBe(issuer.id);
+    expect(response.items[0].status).toBe('active');
+  });
+
+  it('supports application lifecycle actions separately', async () => {
+    const issuer = await service.createIssuer(
+      issuerDto('issuer_lifecycle', 'Lifecycle'),
+      actor,
+    );
+    const application = await service.createApplication(
+      { issuerId: issuer.id, key: 'lifecycle', name: 'Lifecycle' },
+      actor,
+    );
+
+    await service.updateApplicationStatus(application.id, 'inactive', actor);
+    expect(applications.rows[0].status).toBe('inactive');
+    const defaultList = await service.listApplications({
+      page: 1,
+      limit: 10,
+    });
+    expect(defaultList.items).toHaveLength(1);
+    expect(defaultList.items[0].status).toBe('inactive');
+
+    const activeList = await service.listApplications({
+      page: 1,
+      limit: 10,
+      status: 'active',
+    });
+    expect(activeList.items).toHaveLength(0);
+
+    await service.updateApplicationStatus(application.id, 'active', actor);
+    await service.archiveApplication(application.id, actor);
+    expect(applications.rows[0].status).toBe('archived');
+
+    await service.unarchiveApplication(application.id, actor);
+    expect(applications.rows[0].status).toBe('active');
+
+    await service.deleteApplication(application.id, actor);
+    expect(applications.rows[0].deletedAt).toBeInstanceOf(Date);
+  });
+
   it('keeps document key uniqueness scoped by issuer and application', async () => {
     const issuer = await service.createIssuer(issuerDto('issuer_hemia'), actor);
     const firstApp = await service.createApplication(
@@ -429,6 +567,25 @@ class Repo<T extends { id: string; createdAt?: Date; updatedAt?: Date }> {
     return this.find(options).then((rows) => rows[0] ?? null);
   }
 
+  findAndCount(options?: {
+    where?: Partial<T> | Partial<T>[];
+    order?: Record<string, 'DESC'>;
+    skip?: number;
+    take?: number;
+  }) {
+    const where = options?.where;
+    let rows = this.rows.filter((row) =>
+      Array.isArray(where)
+        ? where.some((condition) => matches(row, condition))
+        : matches(row, where ?? {}),
+    );
+    if (options?.order) rows = rows.toReversed();
+    const total = rows.length;
+    const start = options?.skip ?? 0;
+    const end = options?.take === undefined ? undefined : start + options.take;
+    return Promise.resolve([rows.slice(start, end), total] as [T[], number]);
+  }
+
   existsBy(where: Partial<T>) {
     return Promise.resolve(this.rows.some((row) => matches(row, where)));
   }
@@ -457,6 +614,11 @@ class Repo<T extends { id: string; createdAt?: Date; updatedAt?: Date }> {
       Object.assign(row, patch);
     }
     return Promise.resolve({ affected: 1 });
+  }
+
+  softRemove(entity: T) {
+    (entity as T & { deletedAt?: Date }).deletedAt = new Date();
+    return this.save(entity);
   }
 }
 

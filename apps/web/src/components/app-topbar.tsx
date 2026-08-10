@@ -5,6 +5,14 @@ import { Bell, LayoutGrid, PanelLeft, PanelRight, Settings } from "lucide-react"
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import { breadcrumbsFor } from "@/lib/nav";
 import { OrganizationSelector } from "@/components/organization-selector";
 import type { LegalSession } from "@/lib/legal-session";
@@ -34,26 +42,32 @@ export function AppTopbar({
           <PanelLeft className="size-4" />
         )}
       </button>
-      <nav aria-label="Ruta actual" className="flex min-w-0 items-center gap-3 text-sm">
-        <LayoutGrid className="size-4 shrink-0 text-muted-foreground" />
-        <Link href="/" className="hidden text-muted-foreground hover:text-foreground sm:inline">
-          Hemia
-        </Link>
-        {breadcrumbs.map(({ label, href }, index) => (
-          <Fragment key={label}>
-            <span className={index === 0 ? "hidden text-muted-foreground sm:inline" : "text-muted-foreground"}>
-              /
-            </span>
-            {href ? (
-              <Link href={href} className="text-muted-foreground hover:text-foreground">
-                {label}
-              </Link>
-            ) : (
-              <span className="truncate font-semibold text-foreground">{label}</span>
-            )}
-          </Fragment>
-        ))}
-      </nav>
+      <Breadcrumb aria-label="Ruta actual" className="min-w-0">
+        <BreadcrumbList className="flex-nowrap gap-3 overflow-hidden text-sm">
+          <BreadcrumbItem className="hidden shrink-0 sm:inline-flex">
+            <BreadcrumbLink render={<Link href="/" />}>
+              <span className="inline-flex items-center gap-2">
+                <LayoutGrid className="size-4 shrink-0" />
+                Hemia
+              </span>
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          {breadcrumbs.map(({ label, href }, index) => (
+            <Fragment key={label}>
+              <BreadcrumbSeparator className={index === 0 ? "hidden sm:block" : undefined} />
+              <BreadcrumbItem className="min-w-0 shrink-0">
+                {href ? (
+                  <BreadcrumbLink render={<Link href={href} />} className="truncate">
+                    {label}
+                  </BreadcrumbLink>
+                ) : (
+                  <BreadcrumbPage className="truncate font-semibold">{label}</BreadcrumbPage>
+                )}
+              </BreadcrumbItem>
+            </Fragment>
+          ))}
+        </BreadcrumbList>
+      </Breadcrumb>
       <div className="ml-auto flex items-center gap-2">
         <OrganizationSelector session={session} />
         <Button

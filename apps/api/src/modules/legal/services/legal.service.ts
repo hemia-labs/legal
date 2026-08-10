@@ -140,6 +140,14 @@ export class LegalService {
     };
   }
 
+  async listIssuerOptions() {
+    const issuers = await this.issuers.find({
+      select: { id: true, name: true, status: true },
+      order: { name: 'ASC', id: 'ASC' },
+    });
+    return issuers.map(({ id, name, status }) => ({ id, name, status }));
+  }
+
   async getIssuer(id: string) {
     return LegalMapper.issuer(await this.activeIssuer(id));
   }
@@ -187,8 +195,42 @@ export class LegalService {
     return LegalMapper.issuer(saved);
   }
 
+  async updateIssuerStatus(
+    id: string,
+    status: 'active' | 'inactive',
+    actor: LegalActor,
+  ) {
+    const issuer = await this.issuerById(id);
+    if (issuer.status === 'archived') {
+      throw new ConflictException('Issuer is archived');
+    }
+    if (issuer.status === status) {
+      throw new ConflictException(`Issuer is already ${status}`);
+    }
+    issuer.status = status;
+    await this.issuers.save(issuer);
+    await this.audit(actor, `legal.issuer.${status}`, 'legal_issuer', id, {
+      issuerId: id,
+    });
+  }
+
+  async unarchiveIssuer(id: string, actor: LegalActor) {
+    const issuer = await this.issuerById(id);
+    if (issuer.status !== 'archived') {
+      throw new ConflictException('Issuer is not archived');
+    }
+    issuer.status = 'active';
+    await this.issuers.save(issuer);
+    await this.audit(actor, 'legal.issuer.unarchive', 'legal_issuer', id, {
+      issuerId: id,
+    });
+  }
+
   async archiveIssuer(id: string, actor: LegalActor) {
-    const issuer = await this.activeIssuer(id);
+    const issuer = await this.issuerById(id);
+    if (issuer.status === 'archived') {
+      throw new ConflictException('Issuer is already archived');
+    }
     issuer.status = 'archived';
     await this.issuers.save(issuer);
     await this.audit(actor, 'legal.issuer.archive', 'legal_issuer', id, {
@@ -196,14 +238,45 @@ export class LegalService {
     });
   }
 
-  async listApplications(filter: ApplicationFilterDto) {
-    const applications = await this.applications.find({
-      where: filter.issuerId ? { issuerId: filter.issuerId } : {},
-      order: { createdAt: 'DESC' },
+  async deleteIssuer(id: string, actor: LegalActor) {
+    const issuer = await this.issuerById(id);
+    await this.issuers.softRemove(issuer);
+    await this.audit(actor, 'legal.issuer.delete', 'legal_issuer', id, {
+      issuerId: id,
     });
-    return applications.map((application) =>
-      LegalMapper.application(application),
-    );
+  }
+
+  async listApplications(filter: ApplicationFilterDto) {
+    const page = filter.page ?? 1;
+    const limit = filter.limit ?? 10;
+    const base: FindOptionsWhere<LegalApplication> = {};
+    if (filter.status && filter.status !== 'all') base.status = filter.status;
+    if (filter.issuerId) base.issuerId = filter.issuerId;
+
+    const search = filter.search?.trim();
+    const where: FindOptionsWhere<LegalApplication>[] = search
+      ? [
+          { ...base, key: ILike(`%${search}%`) },
+          { ...base, name: ILike(`%${search}%`) },
+        ]
+      : [base];
+    const [applications, total] = await this.applications.findAndCount({
+      where,
+      relations: { issuer: true },
+      order: { createdAt: 'DESC', id: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      items: applications.map((application) => LegalMapper.application(application)),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async createApplication(dto: CreateApplicationDto, actor: LegalActor) {
@@ -233,7 +306,24 @@ export class LegalService {
     actor: LegalActor,
   ) {
     const application = await this.activeApplication(id);
-    Object.assign(application, dto);
+    if (dto.issuerId && dto.issuerId !== application.issuerId) {
+      await this.activeIssuer(dto.issuerId);
+      if (await this.documents.existsBy({ applicationId: id })) {
+        throw new ConflictException(
+          'Application issuer cannot change after documents are created',
+        );
+      }
+      if (
+        await this.applications.existsBy({
+          issuerId: dto.issuerId,
+          key: application.key,
+        })
+      ) {
+        throw new ConflictException('Application key already exists for issuer');
+      }
+      application.issuerId = dto.issuerId;
+    }
+    if (dto.name !== undefined) application.name = dto.name;
     const saved = await this.applications.save(application);
     await this.audit(actor, 'legal.application.edit', 'legal_application', id, {
       issuerId: saved.issuerId,
@@ -243,12 +333,68 @@ export class LegalService {
   }
 
   async archiveApplication(id: string, actor: LegalActor) {
-    const application = await this.activeApplication(id);
+    const application = await this.applicationById(id);
+    if (application.status === 'archived') {
+      throw new ConflictException('Application is already archived');
+    }
     application.status = 'archived';
     await this.applications.save(application);
     await this.audit(
       actor,
       'legal.application.archive',
+      'legal_application',
+      id,
+      { issuerId: application.issuerId, applicationId: id },
+    );
+  }
+
+  async unarchiveApplication(id: string, actor: LegalActor) {
+    const application = await this.applicationById(id);
+    if (application.status !== 'archived') {
+      throw new ConflictException('Application is not archived');
+    }
+    await this.activeIssuer(application.issuerId);
+    application.status = 'active';
+    await this.applications.save(application);
+    await this.audit(
+      actor,
+      'legal.application.unarchive',
+      'legal_application',
+      id,
+      { issuerId: application.issuerId, applicationId: id },
+    );
+  }
+
+  async updateApplicationStatus(
+    id: string,
+    status: 'active' | 'inactive',
+    actor: LegalActor,
+  ) {
+    const application = await this.applicationById(id);
+    if (application.status === 'archived') {
+      throw new ConflictException('Application is archived');
+    }
+    if (application.status === status) {
+      throw new ConflictException(`Application is already ${status}`);
+    }
+    if (status === 'active') await this.activeIssuer(application.issuerId);
+    application.status = status;
+    await this.applications.save(application);
+    await this.audit(
+      actor,
+      `legal.application.${status}`,
+      'legal_application',
+      id,
+      { issuerId: application.issuerId, applicationId: id },
+    );
+  }
+
+  async deleteApplication(id: string, actor: LegalActor) {
+    const application = await this.applicationById(id);
+    await this.applications.softRemove(application);
+    await this.audit(
+      actor,
+      'legal.application.delete',
       'legal_application',
       id,
       { issuerId: application.issuerId, applicationId: id },
@@ -1097,14 +1243,19 @@ export class LegalService {
   }
 
   private async activeApplication(id: string, manager?: EntityManager) {
+    const application = await this.applicationById(id, manager);
+    if (application.status !== 'active') {
+      throw new ConflictException('Application is not active');
+    }
+    await this.activeIssuer(application.issuerId, manager);
+    return application;
+  }
+
+  private async applicationById(id: string, manager?: EntityManager) {
     const applications =
       manager?.getRepository(LegalApplication) ?? this.applications;
     const application = await applications.findOneBy({ id });
     if (!application) throw new NotFoundException('Application not found');
-    if (application.status === 'archived') {
-      throw new ConflictException('Application is archived');
-    }
-    await this.activeIssuer(application.issuerId, manager);
     return application;
   }
 
@@ -1119,12 +1270,17 @@ export class LegalService {
     return document;
   }
 
-  private async activeIssuer(id: string, manager?: EntityManager) {
+  private async issuerById(id: string, manager?: EntityManager) {
     const issuers = manager?.getRepository(LegalIssuer) ?? this.issuers;
     const issuer = await issuers.findOneBy({ id });
     if (!issuer) throw new NotFoundException('Issuer not found');
-    if (issuer.status === 'archived') {
-      throw new ConflictException('Issuer is archived');
+    return issuer;
+  }
+
+  private async activeIssuer(id: string, manager?: EntityManager) {
+    const issuer = await this.issuerById(id, manager);
+    if (issuer.status !== 'active') {
+      throw new ConflictException('Issuer is not active');
     }
     return issuer;
   }

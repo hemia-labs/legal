@@ -54,6 +54,8 @@ export const adminNav = [
         href: "/catalogs/applications",
         label: "Aplicaciones",
         tab: "applications",
+        createLabel: "Nueva aplicación",
+        editLabel: "Editar aplicación",
       },
     ],
   },

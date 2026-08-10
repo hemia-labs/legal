@@ -16,6 +16,9 @@ import {
 import {
   Copy,
   Archive,
+  ArchiveRestore,
+  CheckCircle2,
+  CircleOff,
   LoaderCircle,
   Pencil,
   Funnel,
@@ -55,29 +58,22 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { legalApi, LegalApiError } from "@/lib/legal-api";
+import { LegalApiError } from "@/lib/legal-api";
 import { useLegalSession } from "@/components/app-shell";
+import {
+  archiveIssuer as archiveIssuerRequest,
+  deleteIssuer as deleteIssuerRequest,
+  listIssuers,
+  unarchiveIssuer as unarchiveIssuerRequest,
+  updateIssuerStatus as updateIssuerStatusRequest,
+  type Issuer,
+  type IssuerFilterStatus,
+  type IssuerListResponse,
+} from "@/services/issuer.service";
 
 const PAGE_SIZE = 10;
 
-type Issuer = {
-  id: string;
-  key: string;
-  name: string;
-  legalName: string;
-  type: string;
-  taxId: string | null;
-  countryCode: string;
-  defaultLocale: string;
-  status: "active" | "archived";
-  createdAt: string;
-  updatedAt: string;
-};
-
-type IssuerListResponse = {
-  items: Issuer[];
-  meta: { page: number; limit: number; total: number; totalPages: number };
-};
+type IssuerStatusAction = "active" | "inactive" | "archive" | "unarchive";
 
 const typeNames: Record<string, string> = {
   hemia: "Propio de Hemia",
@@ -124,16 +120,13 @@ export default function IssuersPage() {
     setError(null);
     try {
       if (!hasPermission(session.permissions, "legal.issuers.view")) return;
-      const params = new URLSearchParams({
-        page: String(requestedPage),
-        limit: String(PAGE_SIZE),
+      const response = await listIssuers({
+        page: requestedPage,
+        limit: PAGE_SIZE,
+        search: query,
+        status: statusFilter as IssuerFilterStatus,
+        type: typeFilter,
       });
-      if (query.trim()) params.set("search", query.trim());
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      if (typeFilter !== "all") params.set("type", typeFilter);
-      const response = await legalApi<IssuerListResponse>(
-        `/v1/legal/issuers?${params.toString()}`,
-      );
       if (version !== requestVersion.current) return;
       setIssuers(response.items);
       setMeta(response.meta);
@@ -164,6 +157,7 @@ export default function IssuersPage() {
     !forbidden && hasPermission(permissions, "legal.issuers.create");
   const canEdit = !forbidden && hasPermission(permissions, "legal.issuers.edit");
   const canArchive = !forbidden && hasPermission(permissions, "legal.issuers.archive");
+  const canDelete = !forbidden && hasPermission(permissions, "legal.issuers.delete");
 
   return (
     <div className="flex flex-col gap-6">
@@ -193,12 +187,13 @@ export default function IssuersPage() {
           title="Sin acceso a emisores legales"
           description="Tu rol no incluye el permiso legal.issuers.view."
         />
-      ) : meta.total > 0 || search || query || typeFilter !== "all" ? (
+      ) : meta.total > 0 || search || query || statusFilter !== "active" || typeFilter !== "all" ? (
         <IssuerTable
           issuers={issuers}
           loading={loading}
           canEdit={canEdit}
           canArchive={canArchive}
+          canDelete={canDelete}
           search={search}
           statusFilter={statusFilter}
           typeFilter={typeFilter}
@@ -221,13 +216,20 @@ export default function IssuersPage() {
             setTypeFilter("all");
             setPage(1);
           }}
-          onArchived={(id) =>
+          onStatusChanged={(id, status) =>
             setIssuers((current) =>
               current.map((issuer) =>
-                issuer.id === id ? { ...issuer, status: "archived" } : issuer,
+                issuer.id === id ? { ...issuer, status } : issuer,
               ),
             )
           }
+          onDeleted={(id) => {
+            setIssuers((current) => current.filter((issuer) => issuer.id !== id));
+            setMeta((current) => {
+              const total = Math.max(0, current.total - 1);
+              return { ...current, total, totalPages: Math.ceil(total / PAGE_SIZE) };
+            });
+          }}
         />
       ) : (
         <IssuerEmptyState
@@ -245,6 +247,7 @@ function IssuerTable({
   loading,
   canEdit,
   canArchive,
+  canDelete,
   search,
   statusFilter,
   typeFilter,
@@ -255,12 +258,14 @@ function IssuerTable({
   onApplyFilters,
   onPageChange,
   onClearFilters,
-  onArchived,
+  onStatusChanged,
+  onDeleted,
 }: {
   issuers: Issuer[];
   loading: boolean;
   canEdit: boolean;
   canArchive: boolean;
+  canDelete: boolean;
   search: string;
   statusFilter: string;
   typeFilter: string;
@@ -271,17 +276,27 @@ function IssuerTable({
   onApplyFilters: (status: string, type: string) => void;
   onPageChange: (page: number) => void;
   onClearFilters: () => void;
-  onArchived: (id: string) => void;
+  onStatusChanged: (id: string, status: Issuer["status"]) => void;
+  onDeleted: (id: string) => void;
 }) {
   const [archiveTarget, setArchiveTarget] = useState<Issuer | null>(null);
   const [archivingId, setArchivingId] = useState("");
   const [archiveError, setArchiveError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Issuer | null>(null);
+  const [deletingId, setDeletingId] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [statusTarget, setStatusTarget] = useState<{
+    issuer: Issuer;
+    status: "active" | "inactive";
+  } | null>(null);
+  const [statusChangingId, setStatusChangingId] = useState("");
+  const [statusError, setStatusError] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [draftStatusFilter, setDraftStatusFilter] = useState(statusFilter);
   const [draftTypeFilter, setDraftTypeFilter] = useState(typeFilter);
-  const activeFilterCount = Number(statusFilter === "archived") + Number(typeFilter !== "all");
+  const activeFilterCount = Number(statusFilter !== "active") + Number(typeFilter !== "all");
   const draftFilterCount =
-    Number(draftStatusFilter === "archived") + Number(draftTypeFilter !== "all");
+    Number(draftStatusFilter !== "active") + Number(draftTypeFilter !== "all");
   const hasPendingFilterChanges =
     draftStatusFilter !== statusFilter || draftTypeFilter !== typeFilter;
   const visibleFilterCount = hasPendingFilterChanges
@@ -302,15 +317,83 @@ function IssuerTable({
     setArchivingId(target.id);
     setArchiveError("");
     try {
-      await legalApi(`/v1/legal/issuers/${target.id}`, { method: "DELETE" });
-      onArchived(target.id);
+      await archiveIssuerRequest(target.id);
+      onStatusChanged(target.id, "archived");
       setArchiveTarget(null);
     } catch (cause) {
       setArchiveError(
-        cause instanceof Error ? cause.message : "No se pudo eliminar el emisor.",
+        cause instanceof Error ? cause.message : "No se pudo archivar el emisor.",
       );
     } finally {
       setArchivingId("");
+    }
+  }
+
+  async function deleteIssuer() {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setDeletingId(target.id);
+    setDeleteError("");
+    try {
+      await deleteIssuerRequest(target.id);
+      onDeleted(target.id);
+      setDeleteTarget(null);
+    } catch (cause) {
+      setDeleteError(
+        cause instanceof Error ? cause.message : "No se pudo eliminar el emisor.",
+      );
+    } finally {
+      setDeletingId("");
+    }
+  }
+
+  async function changeIssuerStatus(issuer: Issuer, action: IssuerStatusAction) {
+    if (action === "archive") {
+      setArchiveError("");
+      setArchiveTarget(issuer);
+      return;
+    }
+
+    if (action === "active" || action === "inactive") {
+      setStatusError("");
+      setStatusTarget({ issuer, status: action });
+      return;
+    }
+
+    setStatusChangingId(issuer.id);
+    setStatusError("");
+    try {
+      if (action === "unarchive") {
+        await unarchiveIssuerRequest(issuer.id);
+        onStatusChanged(issuer.id, "active");
+      } else {
+        await updateIssuerStatusRequest(issuer.id, action);
+        onStatusChanged(issuer.id, action);
+      }
+    } catch (cause) {
+      setStatusError(
+        cause instanceof Error ? cause.message : "No se pudo actualizar el estado del emisor.",
+      );
+    } finally {
+      setStatusChangingId("");
+    }
+  }
+
+  async function confirmStatusChange() {
+    if (!statusTarget) return;
+    const target = statusTarget;
+    setStatusChangingId(target.issuer.id);
+    setStatusError("");
+    try {
+      await updateIssuerStatusRequest(target.issuer.id, target.status);
+      onStatusChanged(target.issuer.id, target.status);
+      setStatusTarget(null);
+    } catch (cause) {
+      setStatusError(
+        cause instanceof Error ? cause.message : "No se pudo actualizar el estado del emisor.",
+      );
+    } finally {
+      setStatusChangingId("");
     }
   }
 
@@ -346,8 +429,20 @@ function IssuerTable({
       accessorKey: "status",
       header: "Estado",
       cell: ({ row }) => (
-        <Badge variant={row.original.status === "active" ? "success" : "neutral"}>
-          {row.original.status === "active" ? "Activo" : "Archivado"}
+        <Badge
+          variant={
+            row.original.status === "active"
+              ? "success"
+              : row.original.status === "inactive"
+                ? "warning"
+                : "neutral"
+          }
+        >
+          {row.original.status === "active"
+            ? "Activo"
+            : row.original.status === "inactive"
+              ? "Desactivado"
+              : "Archivado"}
         </Badge>
       ),
     },
@@ -361,6 +456,8 @@ function IssuerTable({
       header: () => <span className="sr-only">Acciones</span>,
       cell: ({ row }) => {
         const issuer = row.original;
+        const canChangeStatus =
+          (canEdit && issuer.status !== "archived") || canArchive;
 
         return (
           <ActionMenu
@@ -383,14 +480,49 @@ function IssuerTable({
                 onSelect: () => void navigator.clipboard.writeText(issuer.legalName),
                 icon: <Copy className="size-4" aria-hidden="true" />,
               },
-              canArchive && issuer.status === "active"
-                ? { type: "separator" as const }
+              canChangeStatus || canDelete ? { type: "separator" as const } : null,
+              canEdit && issuer.status === "inactive"
+                ? {
+                    label: "Activar",
+                    disabled: statusChangingId === issuer.id,
+                    onSelect: () => void changeIssuerStatus(issuer, "active"),
+                    icon: <CheckCircle2 className="size-4" aria-hidden="true" />,
+                  }
                 : null,
-              canArchive && issuer.status === "active"
+              canEdit && issuer.status === "active"
+                ? {
+                    label: "Desactivar",
+                    destructive: true,
+                    disabled: statusChangingId === issuer.id,
+                    onSelect: () => void changeIssuerStatus(issuer, "inactive"),
+                    icon: <CircleOff className="size-4" aria-hidden="true" />,
+                  }
+                : null,
+              canArchive && issuer.status !== "archived"
+                ? {
+                    label: "Archivar",
+                    destructive: true,
+                    onSelect: () => void changeIssuerStatus(issuer, "archive"),
+                    icon: <Archive className="size-4" aria-hidden="true" />,
+                  }
+                : null,
+              canArchive && issuer.status === "archived"
+                ? {
+                    label: "Desarchivar",
+                    disabled: statusChangingId === issuer.id,
+                    onSelect: () => void changeIssuerStatus(issuer, "unarchive"),
+                    icon: <ArchiveRestore className="size-4" aria-hidden="true" />,
+                  }
+                : null,
+              canDelete
                 ? {
                     label: "Eliminar",
                     destructive: true,
-                    onSelect: () => setArchiveTarget(issuer),
+                    disabled: deletingId === issuer.id,
+                    onSelect: () => {
+                      setDeleteError("");
+                      setDeleteTarget(issuer);
+                    },
                     icon: <Trash2 className="size-4" aria-hidden="true" />,
                   }
                 : null,
@@ -403,6 +535,11 @@ function IssuerTable({
 
   return (
     <section className="overflow-hidden rounded-xl border border-surface-line bg-card p-1 shadow-sm">
+      {statusError && (
+        <p role="alert" className="border-b border-error/30 bg-error-subtle px-3 py-2 text-sm font-medium text-error">
+          {statusError}
+        </p>
+      )}
       <div className="flex flex-col gap-3 border-b border-surface-line p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative min-w-0 sm:w-80">
           <Search
@@ -474,6 +611,9 @@ function IssuerTable({
                 <DropdownMenuLabel>Estado</DropdownMenuLabel>
                 <DropdownMenuRadioItem value="active" closeOnClick={false}>
                   Activos
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="inactive" closeOnClick={false}>
+                  Desactivados
                 </DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="archived" closeOnClick={false}>
                   Archivados
@@ -596,17 +736,69 @@ function IssuerTable({
         )}
       </footer>
       <AlertDialog
+        open={statusTarget !== null}
+        onOpenChange={(open) => !open && !statusChangingId && setStatusTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia
+              className={statusTarget?.status === "inactive" ? "text-destructive" : "text-primary"}
+            >
+              {statusTarget?.status === "inactive" ? (
+                <CircleOff className="size-5" aria-hidden="true" />
+              ) : (
+                <CheckCircle2 className="size-5" aria-hidden="true" />
+              )}
+            </AlertDialogMedia>
+            <AlertDialogTitle>
+              {statusTarget?.status === "inactive"
+                ? "¿Desactivar emisor?"
+                : "¿Activar emisor?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {statusTarget?.status === "inactive"
+                ? `“${statusTarget.issuer.name}” dejará de estar disponible para nuevas operaciones. Podrás activarlo después.`
+                : `“${statusTarget?.issuer.name}” volverá a estar disponible para nuevas operaciones.`}
+            </AlertDialogDescription>
+            {statusError && <p className="text-sm font-medium text-destructive">{statusError}</p>}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+              disabled={Boolean(statusChangingId)}
+            >
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant={statusTarget?.status === "inactive" ? "destructive" : "default"}
+              className="disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+              disabled={Boolean(statusChangingId)}
+              onClick={() => void confirmStatusChange()}
+            >
+              {statusChangingId && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
+              {statusChangingId
+                ? statusTarget?.status === "inactive"
+                  ? "Desactivando…"
+                  : "Activando…"
+                : statusTarget?.status === "inactive"
+                  ? "Desactivar"
+                  : "Activar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
         open={archiveTarget !== null}
         onOpenChange={(open) => !open && !archivingId && setArchiveTarget(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogMedia className="text-destructive">
-              <Trash2 className="size-5" aria-hidden="true" />
+              <Archive className="size-5" aria-hidden="true" />
             </AlertDialogMedia>
-            <AlertDialogTitle>Eliminar emisor</AlertDialogTitle>
+            <AlertDialogTitle>Archivar emisor</AlertDialogTitle>
             <AlertDialogDescription>
-              “{archiveTarget?.name}” dejará de estar disponible para nuevas operaciones. Sus datos e historial se conservarán.
+              “{archiveTarget?.name}” dejará de estar disponible y se conservarán sus datos e historial. Podrás desarchivarlo después.
             </AlertDialogDescription>
             {archiveError && <p className="text-sm font-medium text-destructive">{archiveError}</p>}
           </AlertDialogHeader>
@@ -624,7 +816,41 @@ function IssuerTable({
               onClick={() => void archiveIssuer()}
             >
               {archivingId && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
-              {archivingId ? "Eliminando…" : "Eliminar"}
+              {archivingId ? "Archivando…" : "Archivar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && !deletingId && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia className="text-destructive">
+              <Trash2 className="size-5" aria-hidden="true" />
+            </AlertDialogMedia>
+            <AlertDialogTitle>Eliminar emisor</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{deleteTarget?.name}” se eliminará lógicamente, dejará de aparecer en los listados y conservará su historial.
+            </AlertDialogDescription>
+            {deleteError && <p className="text-sm font-medium text-destructive">{deleteError}</p>}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+              disabled={Boolean(deletingId)}
+            >
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              className="disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+              disabled={Boolean(deletingId)}
+              onClick={() => void deleteIssuer()}
+            >
+              {deletingId && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
+              {deletingId ? "Eliminando…" : "Eliminar"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

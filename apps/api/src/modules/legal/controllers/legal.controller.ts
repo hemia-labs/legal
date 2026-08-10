@@ -33,8 +33,10 @@ import {
   NotificationFilterDto,
   PublishDraftDto,
   UpdateApplicationDto,
+  UpdateApplicationStatusDto,
   UpdateDocumentDto,
   UpdateIssuerDto,
+  UpdateIssuerStatusDto,
   UpsertDraftDto,
 } from '../dtos/legal-catalog.dto';
 import { LegalService } from '../services/legal.service';
@@ -48,6 +50,12 @@ export class LegalController {
   @Permissions('legal.issuers.view')
   listIssuers(@Query() filter: IssuerFilterDto) {
     return this.service.listIssuers(filter);
+  }
+
+  @Get('issuers/options')
+  @Permissions('legal.issuers.view')
+  listIssuerOptions() {
+    return this.service.listIssuerOptions();
   }
 
   @Get('issuers/:id')
@@ -72,11 +80,36 @@ export class LegalController {
     return this.service.updateIssuer(id, dto, request.actor);
   }
 
-  @Delete('issuers/:id')
+  @Patch('issuers/:id/status')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Permissions('legal.issuers.edit')
+  updateIssuerStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateIssuerStatusDto,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.updateIssuerStatus(id, dto.status, request.actor);
+  }
+
+  @Post('issuers/:id/unarchive')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Permissions('legal.issuers.archive')
+  unarchiveIssuer(@Param('id') id: string, @Req() request: LegalRequest) {
+    return this.service.unarchiveIssuer(id, request.actor);
+  }
+
+  @Post('issuers/:id/archive')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Permissions('legal.issuers.archive')
   archiveIssuer(@Param('id') id: string, @Req() request: LegalRequest) {
     return this.service.archiveIssuer(id, request.actor);
+  }
+
+  @Delete('issuers/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Permissions('legal.issuers.delete')
+  deleteIssuer(@Param('id') id: string, @Req() request: LegalRequest) {
+    return this.service.deleteIssuer(id, request.actor);
   }
 
   @Get('applications')
@@ -104,11 +137,36 @@ export class LegalController {
     return this.service.updateApplication(id, dto, request.actor);
   }
 
-  @Delete('applications/:id')
+  @Patch('applications/:id/status')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Permissions('legal.applications.edit')
+  updateApplicationStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateApplicationStatusDto,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.updateApplicationStatus(id, dto.status, request.actor);
+  }
+
+  @Post('applications/:id/archive')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Permissions('legal.applications.archive')
   archiveApplication(@Param('id') id: string, @Req() request: LegalRequest) {
     return this.service.archiveApplication(id, request.actor);
+  }
+
+  @Post('applications/:id/unarchive')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Permissions('legal.applications.archive')
+  unarchiveApplication(@Param('id') id: string, @Req() request: LegalRequest) {
+    return this.service.unarchiveApplication(id, request.actor);
+  }
+
+  @Delete('applications/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Permissions('legal.applications.delete')
+  deleteApplication(@Param('id') id: string, @Req() request: LegalRequest) {
+    return this.service.deleteApplication(id, request.actor);
   }
 
   @Get('documents')
