@@ -23,8 +23,10 @@ apps/api/
     app.module.ts                # módulo raíz (DatabaseModule/WidgetsModule comentados hasta tener DB)
     config/
       database.config.ts         # config namespaced 'database' (registerAs)
+      secrets.config.ts          # scope y credenciales de Vault (registerAs)
     database/
       database.module.ts         # TypeOrmModule.forRootAsync, synchronize: false
+      database.types.ts          # contrato del secreto de conexión a PostgreSQL
       migrations/                # migraciones TypeORM
     modules/
       widgets/                   # módulo dummy de ejemplo (controller, service, entity, dtos)
@@ -42,6 +44,21 @@ DB_PASSWORD=
 DB_DATABASE=
 DB_LOGGING=false
 
+# Vault para la conexión de TypeORM; con false se usan los valores DB_*.
+SECRETS_ENABLED=false
+SECRETS_ENVIRONMENT=dev
+SECRETS_CATEGORY=internal
+SECRETS_OWNER=hemia
+SECRETS_SYSTEM=legal
+SECRETS_CACHE_ENABLED=true
+SECRETS_CACHE_TTL_MS=60000
+VAULT_BASE_URL=https://vault.hemia.com
+VAULT_ROLE_ID=
+VAULT_SECRET_ID=
+VAULT_AUTH_PATH=approle
+VAULT_MOUNT_PREFIX=kv-
+VAULT_TIMEOUT_MS=5000
+
 # RabbitMQ / Event Bus de provisioning Access → Legal
 AMQP_URL=amqp://user:password@localhost:5672
 EVENT_BUS_ENABLED=true
@@ -57,6 +74,21 @@ S3_ACCESS_KEY_ID=
 S3_SECRET_ACCESS_KEY=
 S3_FORCE_PATH_STYLE=false
 S3_SIGNED_URL_TTL_SECONDS=300
+```
+
+Con `SECRETS_ENABLED=true`, el API lee el secreto lógico
+`database/postgres` desde HashiCorp Vault KV v2. Con el scope por defecto se
+resuelve como `kv-dev/internal/hemia/legal/database/postgres` y debe contener:
+
+```json
+{
+  "db_database": "legal",
+  "db_host": "postgres.example.com",
+  "db_logging": false,
+  "db_password": "...",
+  "db_port": 5432,
+  "db_username": "legal"
+}
 ```
 
 `PORT` opcional (default `3017`). `.env` y `.env.local` están en `.gitignore`.

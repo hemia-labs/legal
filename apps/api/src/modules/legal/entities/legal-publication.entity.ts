@@ -71,14 +71,20 @@ export class LegalPublication {
   @Column({ name: 'rules_snapshot', type: 'jsonb' })
   rulesSnapshot: Record<string, unknown>[];
 
-  @Column({ name: 'content_markdown', type: 'text' })
-  contentMarkdown: string;
+  @Column({ name: 'content_markdown', type: 'text', nullable: true })
+  contentMarkdown: string | null;
 
-  @Column({ name: 'content_html', type: 'text' })
-  contentHtml: string;
+  @Column({ name: 'content_html', type: 'text', nullable: true })
+  contentHtml: string | null;
 
   @Column({ name: 'content_hash', length: 64 })
   contentHash: string;
+
+  @Column({ name: 'source_kind', type: 'varchar', length: 20, nullable: true })
+  sourceKind?: 'pdf' | 'html' | 'markdown' | null;
+
+  @Column({ name: 'source_hash', type: 'varchar', length: 64, nullable: true })
+  sourceHash?: string | null;
 
   @Column({ name: 'manifest_hash', type: 'varchar', length: 64, nullable: true })
   manifestHash: string | null;

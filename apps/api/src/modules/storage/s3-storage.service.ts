@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, ServiceUnavailableException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
@@ -8,44 +8,33 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
-import type { StorageObjectRef } from './storage.types';
-
-type StorageConfig = {
-  region: string;
-  bucket: string;
-  endpoint?: string;
-  accessKeyId?: string;
-  secretAccessKey?: string;
-  forcePathStyle: boolean;
-  signedUrlTtlSeconds: number;
-  nodeEnv: string;
-};
+import type { StorageConfig, StorageObjectRef } from './types/storage.types';
 
 type StoredMemoryObject = StorageObjectRef & { body: Buffer };
 
 @Injectable()
 export class S3StorageService {
-  private readonly config: StorageConfig;
   private readonly client: S3Client | null;
   private readonly memory = new Map<string, StoredMemoryObject>();
 
-  constructor(configService: ConfigService) {
-    this.config = configService.getOrThrow<StorageConfig>('storage');
+  constructor(private readonly config: StorageConfig) {
+    this.client = this.createClient(config);
+  }
 
-    if (this.config.nodeEnv === 'test') {
-      this.client = null;
-      return;
+  private createClient(config: StorageConfig) {
+    if (config.nodeEnv === 'test') {
+      return null;
     }
 
-    this.client = new S3Client({
-      region: this.config.region,
-      endpoint: this.config.endpoint,
-      forcePathStyle: this.config.forcePathStyle,
+    return new S3Client({
+      region: config.region,
+      endpoint: config.endpoint,
+      forcePathStyle: config.forcePathStyle,
       credentials:
-        this.config.accessKeyId && this.config.secretAccessKey
+        config.accessKeyId && config.secretAccessKey
           ? {
-              accessKeyId: this.config.accessKeyId,
-              secretAccessKey: this.config.secretAccessKey,
+              accessKeyId: config.accessKeyId,
+              secretAccessKey: config.secretAccessKey,
             }
           : undefined,
     });
@@ -152,6 +141,38 @@ export class S3StorageService {
     );
 
     return { url, expiresAt };
+  }
+
+  async read(ref: StorageObjectRef): Promise<Buffer> {
+    if (!this.client) {
+      const stored = this.memory.get(ref.key);
+      if (!stored) throw new ServiceUnavailableException('Storage object not found');
+      return Buffer.from(stored.body);
+    }
+
+    const response = await this.client.send(
+      new GetObjectCommand({ Bucket: ref.bucket, Key: ref.key }),
+    );
+    if (!response.Body) throw new ServiceUnavailableException('Storage object is empty');
+    if ('transformToByteArray' in response.Body) {
+      return Buffer.from(await response.Body.transformToByteArray());
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+
+  async delete(ref: StorageObjectRef) {
+    if (!this.client) {
+      this.memory.delete(ref.key);
+      return;
+    }
+    await this.client.send(
+      new DeleteObjectCommand({ Bucket: ref.bucket, Key: ref.key }),
+    );
   }
 
   private requireBucket() {

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -6,14 +7,21 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  MaxFileSizeValidator,
   Param,
+  ParseFilePipe,
   Patch,
   Post,
   Query,
   Req,
   Res,
+  UploadedFile,
+  UseInterceptors,
   UseGuards,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { Permissions } from '../../../common/decorators/permissions.decorator';
 import { LegalAuthGuard } from '../../../common/guards/legal-auth.guard';
 import { PermissionsGuard } from '../../../common/guards/permissions.guard';
@@ -32,13 +40,15 @@ import {
   MePendingQueryDto,
   NotificationFilterDto,
   PublishDraftDto,
+  PublicDocumentQueryDto,
+  SourceUploadMetadataDto,
   UpdateApplicationDto,
   UpdateApplicationStatusDto,
   UpdateDocumentDto,
   UpdateIssuerDto,
   UpdateIssuerStatusDto,
-  UpsertDraftDto,
 } from '../dtos/legal-catalog.dto';
+import type { LegalSourceUpload } from '../types/legal-source.types';
 import { LegalService } from '../services/legal.service';
 
 @Controller('v1/legal')
@@ -175,6 +185,12 @@ export class LegalController {
     return this.service.listDocuments(filter);
   }
 
+  @Get('document-types')
+  @Permissions('legal.documents.view')
+  listDocumentTypes() {
+    return this.service.listDocumentTypes();
+  }
+
   @Post('documents')
   @Permissions('legal.documents.create')
   createDocument(@Body() dto: CreateDocumentDto, @Req() request: LegalRequest) {
@@ -231,22 +247,48 @@ export class LegalController {
 
   @Post('documents/:documentId/draft')
   @Permissions('legal.versions.create')
-  createDraft(
+  @UseInterceptors(FileInterceptor('file'))
+  async createDraft(
     @Param('documentId') documentId: string,
-    @Body() dto: UpsertDraftDto,
+    @Body('metadata') metadata: string | undefined,
+    @UploadedFile(
+      new ParseFilePipe({
+        fileIsRequired: true,
+        validators: [new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 })],
+      }),
+    )
+    file: LegalSourceUpload,
     @Req() request: LegalRequest,
   ) {
-    return this.service.createDraft(documentId, dto, request.actor);
+    const sourceMetadata = await parseSourceUploadMetadata(metadata);
+    return this.service.createDraft(
+      documentId,
+      { ...file, sourceKind: sourceMetadata.sourceKind },
+      request.actor,
+    );
   }
 
   @Patch('documents/:documentId/draft')
   @Permissions('legal.versions.edit')
-  updateDraft(
+  @UseInterceptors(FileInterceptor('file'))
+  async updateDraft(
     @Param('documentId') documentId: string,
-    @Body() dto: UpsertDraftDto,
+    @Body('metadata') metadata: string | undefined,
+    @UploadedFile(
+      new ParseFilePipe({
+        fileIsRequired: true,
+        validators: [new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 })],
+      }),
+    )
+    file: LegalSourceUpload,
     @Req() request: LegalRequest,
   ) {
-    return this.service.updateDraft(documentId, dto, request.actor);
+    const sourceMetadata = await parseSourceUploadMetadata(metadata);
+    return this.service.updateDraft(
+      documentId,
+      { ...file, sourceKind: sourceMetadata.sourceKind },
+      request.actor,
+    );
   }
 
   @Post('documents/:documentId/draft/preview-publication')
@@ -399,8 +441,13 @@ export class LegalPublicController {
   getCurrentPublicDocument(
     @Param('applicationId') applicationId: string,
     @Param('documentKey') documentKey: string,
+    @Query() query: PublicDocumentQueryDto,
   ) {
-    return this.service.getPublicDocument(applicationId, documentKey);
+    return this.service.getPublicDocument(
+      applicationId,
+      documentKey,
+      query.locale,
+    );
   }
 
   @Get(':applicationId/documents/:documentKey/versions/:version')
@@ -408,7 +455,29 @@ export class LegalPublicController {
     @Param('applicationId') applicationId: string,
     @Param('documentKey') documentKey: string,
     @Param('version') version: string,
+    @Query() query: PublicDocumentQueryDto,
   ) {
-    return this.service.getPublicDocument(applicationId, documentKey, version);
+    return this.service.getPublicDocument(
+      applicationId,
+      documentKey,
+      query.locale,
+      version,
+    );
   }
+}
+
+async function parseSourceUploadMetadata(metadata?: string) {
+  if (!metadata) return new SourceUploadMetadataDto();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(metadata);
+  } catch {
+    throw new BadRequestException('Upload metadata must be valid JSON');
+  }
+
+  const dto = plainToInstance(SourceUploadMetadataDto, parsed);
+  const errors = await validate(dto, { whitelist: true });
+  if (errors.length) throw new BadRequestException('Invalid upload metadata');
+  return dto;
 }

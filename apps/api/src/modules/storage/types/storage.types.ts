@@ -1,4 +1,16 @@
-export type PublicationArtifact = 'markdown' | 'html' | 'json';
+export type SourceKind = 'pdf' | 'html' | 'markdown';
+export type PublicationArtifact = 'markdown' | 'html' | 'json' | 'pdf';
+
+export type StorageConfig = {
+  region: string;
+  bucket: string;
+  endpoint?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  forcePathStyle: boolean;
+  signedUrlTtlSeconds: number;
+  nodeEnv: string;
+};
 
 export type StorageObjectRef = {
   bucket: string;
@@ -15,8 +27,9 @@ export type StoredArtifact = StorageObjectRef & {
 };
 
 export type PublicationKeyContext = {
-  documentType: string;
+  issuerId: string;
   productId: string;
+  locale: string;
   organizationId?: string | null;
   tenantId?: string | null;
   documentKey: string;
@@ -32,13 +45,34 @@ export function buildPublicationArtifactKey(
 
   return [
     'documents',
-    safeSegment(context.documentType),
+    safeSegment(context.issuerId),
     safeSegment(context.productId),
+    safeSegment(context.locale),
     safeSegment(context.organizationId ?? 'global'),
     safeSegment(context.tenantId ?? 'global'),
     safeSegment(context.documentKey),
     safeSegment(context.version),
     filename,
+  ].join('/');
+}
+
+export function buildPublicationSourceKey(
+  context: PublicationKeyContext,
+  sourceKind: SourceKind,
+  sourceHash: string,
+) {
+  const extension = sourceKind === 'markdown' ? 'md' : sourceKind;
+  return [
+    'documents',
+    safeSegment(context.issuerId),
+    safeSegment(context.productId),
+    safeSegment(context.locale),
+    safeSegment(context.organizationId ?? 'global'),
+    safeSegment(context.tenantId ?? 'global'),
+    safeSegment(context.documentKey),
+    safeSegment(context.version),
+    'source',
+    `${sourceHash}.${extension}`,
   ].join('/');
 }
 

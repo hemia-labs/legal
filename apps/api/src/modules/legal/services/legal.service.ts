@@ -14,9 +14,6 @@ import {
   Not,
   Repository,
 } from 'typeorm';
-import { createHash } from 'crypto';
-import MarkdownIt from 'markdown-it';
-import { filterXSS } from 'xss';
 import type {
   LegalActor,
   LegalRequest,
@@ -39,7 +36,6 @@ import {
   UpdateApplicationDto,
   UpdateDocumentDto,
   UpdateIssuerDto,
-  UpsertDraftDto,
 } from '../dtos/legal-catalog.dto';
 import { AuditEvent } from '../entities/audit-event.entity';
 import { LegalAcceptance } from '../entities/legal-acceptance.entity';
@@ -54,11 +50,15 @@ import { LegalPublication } from '../entities/legal-publication.entity';
 import { LegalPublicationAsset } from '../entities/legal-publication-asset.entity';
 import { OutboxEvent } from '../entities/outbox-event.entity';
 import { S3StorageService } from '../../storage/s3-storage.service';
+import { buildPublicationSourceKey } from '../../storage/types/storage.types';
+import { LEGAL_DOCUMENT_TYPES } from '../constants/document-types';
 import { LegalMapper } from '../mappers/legal.mapper';
 import { AccessService } from './access.service';
 import { requireLegalClearance } from '../helpers/legal-precondition.helper';
-
-const markdown = new MarkdownIt();
+import {
+  analyzeLegalSource,
+} from '../helpers/legal-source.helper';
+import type { LegalSourceUpload } from '../types/legal-source.types';
 
 type PendingDocument = {
   documentId: string;
@@ -414,6 +414,10 @@ export class LegalService {
     return documents.map((document) => LegalMapper.document(document));
   }
 
+  listDocumentTypes() {
+    return LEGAL_DOCUMENT_TYPES;
+  }
+
   async createDocument(dto: CreateDocumentDto, actor: LegalActor) {
     const application = await this.activeApplication(dto.applicationId);
     if (application.issuerId !== dto.issuerId) {
@@ -430,13 +434,22 @@ export class LegalService {
       throw new ConflictException('Document key and locale already exist');
     }
 
-    const document = await this.documents.save(
-      this.documents.create({
-        ...dto,
-        documentType: dto.documentType ?? 'terms',
-        status: 'active',
-      }),
-    );
+    let document: LegalDocument;
+    try {
+      document = await this.documents.save(
+        this.documents.create({
+          ...dto,
+          documentType: dto.documentType ?? 'terms',
+          status: 'active',
+        }),
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException('Document key and locale already exist');
+      }
+      throw error;
+    }
+
     await this.audit(
       actor,
       'legal.document.create',
@@ -505,7 +518,7 @@ export class LegalService {
     publicationId: string,
     actor: LegalActor,
   ) {
-    await this.activeDocument(documentId);
+    const document = await this.activeDocument(documentId);
     const publication = await this.publications.findOneBy({
       id: publicationId,
       documentId,
@@ -514,6 +527,11 @@ export class LegalService {
     if (publication.status !== 'failed') {
       throw new ConflictException('Only failed publications can be retried');
     }
+
+    const version = await this.versions.findOneBy({
+      id: publication.documentVersionId,
+    });
+    if (!version) throw new NotFoundException('Publication version not found');
 
     publication.status = 'pending';
     publication.failureReason = null;
@@ -525,7 +543,27 @@ export class LegalService {
         payload: {
           publicationId: saved.id,
           documentId: saved.documentId,
-          versionId: saved.documentVersionId,
+          versionId: version.id,
+          version: version.version,
+          issuerId: document.issuerId,
+          applicationId: document.applicationId,
+          locale: document.locale,
+          contentHash: version.contentHash,
+          sourceHash: version.sourceHash,
+          sourceKind: version.sourceKind,
+          sourceContentType: version.sourceContentType,
+          sourceFileName: version.sourceFileName,
+          sourceRef: version.sourceS3ObjectKey
+            ? {
+                bucket: version.sourceS3Bucket,
+                key: version.sourceS3ObjectKey,
+                versionId: version.sourceS3VersionId,
+                etag: version.sourceS3Etag,
+                contentType: version.sourceContentType,
+                size: version.sourceSizeBytes,
+                sha256: version.sourceHash,
+              }
+            : null,
         },
       }),
     );
@@ -541,37 +579,52 @@ export class LegalService {
 
   async createDraft(
     documentId: string,
-    dto: UpsertDraftDto,
+    dto: LegalSourceUpload,
     actor: LegalActor,
   ) {
     const document = await this.activeDocument(documentId);
     if (await this.versions.existsBy({ documentId, version: 'draft' })) {
       throw new ConflictException('Draft already exists');
     }
-    const draft = await this.versions.save(
-      this.versions.create({
-        documentId,
-        version: 'draft',
-        status: 'draft',
-        contentMarkdown: dto.contentMarkdown,
-      }),
-    );
-    await this.audit(
-      actor,
-      'legal.version.draft_create',
-      'legal_document_version',
-      draft.id,
-      {
-        issuerId: document.issuerId,
-        applicationId: document.applicationId,
-      },
-    );
-    return LegalMapper.draft(draft);
+
+    const uploaded = await this.uploadDraftSource(document, dto);
+    try {
+      const draft = await this.versions.save(
+        this.versions.create({
+          documentId,
+          version: 'draft',
+          status: 'draft',
+          contentMarkdown: null,
+          contentHtml: null,
+          contentHash: uploaded.analysis.contentHash,
+          sourceKind: uploaded.analysis.kind,
+          sourceContentType: dto.mimetype,
+          sourceFileName: uploaded.analysis.fileName,
+          sourceSizeBytes: dto.buffer.length,
+          sourceHash: uploaded.analysis.sourceHash,
+          sourceS3Bucket: uploaded.ref.bucket,
+          sourceS3ObjectKey: uploaded.ref.key,
+          sourceS3VersionId: uploaded.ref.versionId,
+          sourceS3Etag: uploaded.ref.etag,
+        }),
+      );
+      await this.audit(
+        actor,
+        'legal.version.draft_create',
+        'legal_document_version',
+        draft.id,
+        { issuerId: document.issuerId, applicationId: document.applicationId },
+      );
+      return LegalMapper.draft(draft);
+    } catch (error) {
+      await this.storage.delete(uploaded.ref).catch(() => undefined);
+      throw error;
+    }
   }
 
   async updateDraft(
     documentId: string,
-    dto: UpsertDraftDto,
+    dto: LegalSourceUpload,
     actor: LegalActor,
   ) {
     const document = await this.activeDocument(documentId);
@@ -582,7 +635,19 @@ export class LegalService {
     });
     if (!draft) throw new NotFoundException('Draft not found');
 
-    draft.contentMarkdown = dto.contentMarkdown;
+    const uploaded = await this.uploadDraftSource(document, dto);
+    draft.contentMarkdown = null;
+    draft.contentHtml = null;
+    draft.contentHash = uploaded.analysis.contentHash;
+    draft.sourceKind = uploaded.analysis.kind;
+    draft.sourceContentType = dto.mimetype;
+    draft.sourceFileName = uploaded.analysis.fileName;
+    draft.sourceSizeBytes = dto.buffer.length;
+    draft.sourceHash = uploaded.analysis.sourceHash;
+    draft.sourceS3Bucket = uploaded.ref.bucket;
+    draft.sourceS3ObjectKey = uploaded.ref.key;
+    draft.sourceS3VersionId = uploaded.ref.versionId;
+    draft.sourceS3Etag = uploaded.ref.etag;
     const saved = await this.versions.save(draft);
     await this.audit(
       actor,
@@ -649,9 +714,13 @@ export class LegalService {
         throw new ConflictException('Version already exists');
       }
 
-      const contentMarkdown = canonicalMarkdown(draft.contentMarkdown);
-      const contentHtml = renderHtml(contentMarkdown);
-      const contentHash = hashContent(contentMarkdown);
+      if (!draft.sourceS3ObjectKey || !draft.sourceHash || !draft.sourceKind) {
+        throw new ConflictException('Draft has no uploaded source');
+      }
+      const contentMarkdown = null;
+      const contentHtml = null;
+      const contentHash = draft.contentHash;
+      if (!contentHash) throw new ConflictException('Draft has no consumable content');
       const snapshot = await versions.save(
         versions.create({
           documentId,
@@ -660,6 +729,15 @@ export class LegalService {
           contentMarkdown,
           contentHtml,
           contentHash,
+          sourceKind: draft.sourceKind,
+          sourceContentType: draft.sourceContentType,
+          sourceFileName: draft.sourceFileName,
+          sourceSizeBytes: draft.sourceSizeBytes,
+          sourceHash: draft.sourceHash,
+          sourceS3Bucket: draft.sourceS3Bucket,
+          sourceS3ObjectKey: draft.sourceS3ObjectKey,
+          sourceS3VersionId: draft.sourceS3VersionId,
+          sourceS3Etag: draft.sourceS3Etag,
           effectiveFrom: new Date(dto.effectiveFrom),
           effectiveUntil: dto.effectiveUntil
             ? new Date(dto.effectiveUntil)
@@ -696,6 +774,8 @@ export class LegalService {
           contentMarkdown,
           contentHtml,
           contentHash,
+          sourceKind: draft.sourceKind,
+          sourceHash: draft.sourceHash,
           manifestHash: null,
           requestedByIdentityIssuer: actor.identityIssuer,
           requestedBySubjectId: actor.subjectId,
@@ -726,7 +806,23 @@ export class LegalService {
             version: snapshot.version,
             issuerId: document.issuerId,
             applicationId: document.applicationId,
+            locale: document.locale,
             contentHash,
+            sourceHash: draft.sourceHash,
+            sourceKind: draft.sourceKind,
+            sourceContentType: draft.sourceContentType,
+            sourceFileName: draft.sourceFileName,
+            sourceRef: draft.sourceS3ObjectKey
+              ? {
+                  bucket: draft.sourceS3Bucket,
+                  key: draft.sourceS3ObjectKey,
+                  versionId: draft.sourceS3VersionId,
+                  etag: draft.sourceS3Etag,
+                  contentType: draft.sourceContentType,
+                  size: draft.sourceSizeBytes,
+                  sha256: draft.sourceHash,
+                }
+              : null,
             effectiveFrom: snapshot.effectiveFrom?.toISOString() ?? null,
           },
         }),
@@ -737,10 +833,34 @@ export class LegalService {
         publicationId: publication.id,
         versionId: snapshot.id,
         version: dto.version,
+        sourceHash: draft.sourceHash,
         contentHash,
         outboxEventId: outbox.id,
       };
     });
+  }
+
+  private async uploadDraftSource(
+    document: LegalDocument,
+    file: LegalSourceUpload,
+  ) {
+    const analysis = analyzeLegalSource(file);
+    const ref = await this.storage.putImmutable(
+      buildPublicationSourceKey(
+        {
+          issuerId: document.issuerId,
+          productId: document.applicationId,
+          locale: document.locale,
+          documentKey: document.key,
+          version: 'draft',
+        },
+        analysis.kind,
+        analysis.sourceHash,
+      ),
+      file.buffer,
+      file.mimetype,
+    );
+    return { analysis, ref };
   }
 
   async getMyPending(query: MePendingQueryDto, request: LegalRequest) {
@@ -804,6 +924,7 @@ export class LegalService {
         status: 'active',
       });
       if (!document) continue;
+      if (dto.locale && document.locale !== dto.locale) continue;
       const accepted = await this.acceptanceFor(dto, rule, version);
       if (accepted) continue;
       pendingDocuments.push({
@@ -842,6 +963,7 @@ export class LegalService {
       const versions = manager.getRepository(LegalDocumentVersion);
       const rules = manager.getRepository(LegalAcceptanceRule);
       const acceptances = manager.getRepository(LegalAcceptance);
+      const documents = manager.getRepository(LegalDocument);
       const evidences = manager.getRepository(LegalEvidence);
       const outboxEvents = manager.getRepository(OutboxEvent);
       const auditEvents = manager.getRepository(AuditEvent);
@@ -859,6 +981,11 @@ export class LegalService {
         status: 'active',
       });
       if (!rule) throw new NotFoundException('Acceptance rule not found');
+      const document = await documents.findOneBy({ id: rule.documentId });
+      if (!document) throw new NotFoundException('Document not found');
+      if (trustedDto.locale && document.locale !== trustedDto.locale) {
+        throw new ConflictException('Acceptance locale does not match document');
+      }
       ensureAcceptanceContext(rule, trustedDto);
 
       const roles = this.access.rolesFromRequest(request);
@@ -1172,10 +1299,16 @@ export class LegalService {
   async getPublicDocument(
     applicationId: string,
     documentKey: string,
+    locale: string,
     version?: string,
   ) {
     const document = await this.documents.findOne({
-      where: { applicationId, key: documentKey, status: 'active' },
+      where: {
+        applicationId,
+        key: documentKey,
+        locale,
+        status: 'active',
+      },
       order: { createdAt: 'ASC' },
     });
     if (!document) throw new NotFoundException('Document not found');
@@ -1198,8 +1331,17 @@ export class LegalService {
     const assets = await this.publicationAssets.find({
       where: { publicationId: publication.id },
     });
+    const rules = await this.rules.find({
+      where: {
+        documentId: document.id,
+        versionId: published.id,
+        status: 'active',
+      },
+    });
     const artifactEntries = await Promise.all(
-      assets.map(async (asset) => {
+      assets
+        .filter((asset) => asset.kind !== 'source')
+        .map(async (asset) => {
         const signed = await this.storage.signedDownloadUrl({
           bucket: asset.s3Bucket,
           key: asset.s3ObjectKey,
@@ -1230,6 +1372,7 @@ export class LegalService {
         version: published.version,
         status: published.status,
         contentHash: published.contentHash,
+        sourceHash: published.sourceHash,
         effectiveFrom: published.effectiveFrom,
         effectiveUntil: published.effectiveUntil,
         acceptanceDeadline: published.acceptanceDeadline,
@@ -1237,7 +1380,25 @@ export class LegalService {
         publishedAt: published.publishedAt,
       },
       contentHash: published.contentHash,
-      publication: LegalMapper.publication(publication),
+      acceptance: {
+        required: rules.some(
+          (rule) => rule.acceptanceMode !== 'informational',
+        ),
+        blocking: rules.some((rule) => rule.isBlocking),
+        rules: rules.map((rule) => ({
+          acceptanceMode: rule.acceptanceMode,
+          isBlocking: rule.isBlocking,
+          startsAt: rule.startsAt,
+          endsAt: rule.endsAt,
+        })),
+      },
+      publication: {
+        version: publication.version,
+        status: publication.status,
+        effectiveFrom: publication.effectiveFrom,
+        effectiveUntil: publication.effectiveUntil,
+        publishedAt: publication.publishedAt,
+      },
       artifacts: Object.fromEntries(artifactEntries),
     };
   }
@@ -1381,18 +1542,6 @@ export class LegalService {
       }),
     );
   }
-}
-
-export function canonicalMarkdown(markdown: string) {
-  return `${markdown.replace(/\r\n/g, '\n').trim()}\n`;
-}
-
-export function hashContent(markdown: string) {
-  return createHash('sha256').update(markdown).digest('hex');
-}
-
-function renderHtml(contentMarkdown: string) {
-  return filterXSS(markdown.render(contentMarkdown));
 }
 
 function hasOverlappingRules(rules: AcceptanceRuleInputDto[]) {

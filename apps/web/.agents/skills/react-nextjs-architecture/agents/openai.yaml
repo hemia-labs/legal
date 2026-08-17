@@ -1,0 +1,4 @@
+interface:
+  display_name: "React / Next.js Architecture"
+  short_description: "Arquitectura mantenible para apps/web"
+  default_prompt: "Usa $react-nextjs-architecture para implementar esta tarea en apps/web siguiendo la arquitectura y prácticas del proyecto."

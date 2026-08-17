@@ -1,15 +1,17 @@
 import {
   buildEvidenceKey,
   buildPublicationArtifactKey,
-} from '../../../src/modules/storage/storage.types';
+  buildPublicationSourceKey,
+} from '../../../src/modules/storage/types/storage.types';
 
 describe('storage keys', () => {
   it('builds deterministic publication keys with metadata.json', () => {
     expect(
       buildPublicationArtifactKey(
         {
-          documentType: 'Terms & Conditions',
+          issuerId: 'Issuer',
           productId: 'Loop',
+          locale: 'es-MX',
           organizationId: null,
           tenantId: 'Tenant 1',
           documentKey: 'privacy_policy',
@@ -18,7 +20,7 @@ describe('storage keys', () => {
         'json',
       ),
     ).toBe(
-      'documents/terms-conditions/loop/global/tenant-1/privacy_policy/1.0.0/metadata.json',
+      'documents/issuer/loop/es-mx/global/tenant-1/privacy_policy/1.0.0/metadata.json',
     );
   });
 
@@ -26,8 +28,9 @@ describe('storage keys', () => {
     expect(() =>
       buildPublicationArtifactKey(
         {
-          documentType: '../terms',
+          issuerId: '../terms',
           productId: 'loop',
+          locale: 'es-MX',
           documentKey: 'terms',
           version: '1.0.0',
         },
@@ -36,6 +39,24 @@ describe('storage keys', () => {
     ).toThrow();
     expect(buildEvidenceKey('issuer', 'application', 'acceptance')).toBe(
       'evidence/issuer/application/global/global/acceptance/evidence.json',
+    );
+  });
+
+  it('isolates source keys by issuer, application, locale and version', () => {
+    const key = buildPublicationSourceKey(
+      {
+        issuerId: 'issuer-1',
+        productId: 'application-1',
+        locale: 'es-MX',
+        documentKey: 'terms',
+        version: '1.0.0',
+      },
+      'html',
+      'a'.repeat(64),
+    );
+
+    expect(key).toBe(
+      'documents/issuer-1/application-1/es-mx/global/global/terms/1.0.0/source/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.html',
     );
   });
 });

@@ -30,6 +30,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@hemia/auth": "1.0.4",
     "@hemia/event-bus": "0.0.2",
+    "@hemia/secrets": "^0.0.2",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",

@@ -1,16 +1,16 @@
 import { ConflictException } from '@nestjs/common';
 import { S3StorageService } from '../../../src/modules/storage/s3-storage.service';
+import type { StorageConfig } from '../../../src/modules/storage/types/storage.types';
 
 function storage() {
-  return new S3StorageService({
-    getOrThrow: () => ({
-      nodeEnv: 'test',
-      bucket: 'legal-test',
-      region: 'us-east-1',
-      forcePathStyle: false,
-      signedUrlTtlSeconds: 300,
-    }),
-  } as never);
+  const config: StorageConfig = {
+    nodeEnv: 'test',
+    bucket: 'legal-test',
+    region: 'us-east-1',
+    forcePathStyle: false,
+    signedUrlTtlSeconds: 300,
+  };
+  return new S3StorageService(config);
 }
 
 describe('S3StorageService', () => {
@@ -42,5 +42,13 @@ describe('S3StorageService', () => {
 
     expect(signed.url).toContain(encodeURIComponent(ref.key));
     expect(signed.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('reads an immutable source back for the publication worker', async () => {
+    const service = storage();
+    const body = Buffer.from('<h1>Legal</h1>');
+    const ref = await service.putImmutable('documents/source.html', body, 'text/html');
+
+    await expect(service.read(ref)).resolves.toEqual(body);
   });
 });

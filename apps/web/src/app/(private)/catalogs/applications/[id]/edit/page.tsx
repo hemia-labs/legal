@@ -144,18 +144,6 @@ export default function EditApplicationPage() {
       <form onSubmit={(event) => void submit(event)} noValidate>
         <Card className="gap-0 rounded-md py-0">
           <CardContent className="grid gap-5 p-5 md:grid-cols-2 md:p-6">
-            <Field htmlFor="application-name" label="Nombre visible" required description="Nombre corto que verán los operadores." error={nameError}>
-              <Input
-                id="application-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                required
-                minLength={2}
-                maxLength={160}
-                aria-invalid={Boolean(nameError)}
-                aria-describedby="application-name-help application-name-error"
-              />
-            </Field>
             <Field htmlFor="application-issuer" label="Emisor" required description="Solo puedes cambiarlo si la aplicación no tiene documentos asociados." error={issuerError}>
               <Select
                 value={issuerId || null}
@@ -182,6 +170,18 @@ export default function EditApplicationPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </Field>
+            <Field htmlFor="application-name" label="Nombre visible" required description="Nombre corto que verán los operadores." error={nameError}>
+              <Input
+                id="application-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+                minLength={2}
+                maxLength={160}
+                aria-invalid={Boolean(nameError)}
+                aria-describedby="application-name-help application-name-error"
+              />
             </Field>
             <Field htmlFor="application-key" label="Clave técnica" description="La clave identifica la aplicación en integraciones.">
               <Input id="application-key" value={application.key} readOnly className="font-mono" />

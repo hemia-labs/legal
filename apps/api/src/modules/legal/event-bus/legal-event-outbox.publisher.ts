@@ -42,7 +42,7 @@ export class LegalEventOutboxPublisher
       void this.processPending().catch((error) =>
         this.logger.error(error instanceof Error ? error.message : error),
       );
-    }, 5000);
+    }, 30000);
   }
 
   onModuleDestroy() {

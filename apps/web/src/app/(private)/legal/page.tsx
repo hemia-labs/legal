@@ -160,6 +160,7 @@ export default function LegalPage() {
   const tab = tabs.some(({ id }) => id === requestedTab)
     ? (requestedTab as Tab)
     : "issuers";
+  const redirectDocuments = requestedTab === "documents" || requestedTab === "draft";
   const [issuers, setIssuers] = useState<Issuer[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -179,7 +180,15 @@ export default function LegalPage() {
 
   const apiUrl = "/v1/legal";
 
+  useEffect(() => {
+    if (redirectDocuments) router.replace("/documents");
+  }, [redirectDocuments, router]);
+
   const load = useCallback(async () => {
+    if (redirectDocuments) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -200,7 +209,7 @@ export default function LegalPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiUrl]);
+  }, [apiUrl, redirectDocuments]);
 
   useEffect(() => {
     if (loaded.current) return;
@@ -356,6 +365,18 @@ export default function LegalPage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo completar la operación.");
     }
+  }
+
+  if (redirectDocuments) {
+    return (
+      <div className="grid min-h-panel-min place-items-center text-center">
+        <div>
+          <FileText className="mx-auto size-10 text-muted-foreground" />
+          <h1 className="mt-4 text-lg font-semibold">Abriendo Documents…</h1>
+          <p className="mt-1 text-sm text-muted-foreground">La administración de documentos ahora vive en /documents.</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -992,7 +1013,7 @@ export default function LegalPage() {
               readOnly
               value={
                 selectedDocumentId
-                  ? `/legal/public/${documents.find((row) => row.id === selectedDocumentId)?.applicationId}/documents/${documents.find((row) => row.id === selectedDocumentId)?.key}`
+                  ? `/legal/public/${documents.find((row) => row.id === selectedDocumentId)?.applicationId}/documents/${documents.find((row) => row.id === selectedDocumentId)?.key}?locale=${documents.find((row) => row.id === selectedDocumentId)?.locale}`
                   : ""
               }
               className="h-12 md:col-span-2"

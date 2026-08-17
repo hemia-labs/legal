@@ -27,9 +27,16 @@ import { S3StorageService } from '../../storage/s3-storage.service';
 import {
   buildEvidenceKey,
   buildPublicationArtifactKey,
-  type PublicationArtifact,
+  buildPublicationSourceKey,
   type StorageObjectRef,
-} from '../../storage/storage.types';
+} from '../../storage/types/storage.types';
+import {
+  analyzeLegalSource,
+  canonicalHtml,
+  renderMarkdown,
+  sanitizeHtml,
+  sha256,
+} from '../helpers/legal-source.helper';
 
 const CHANNELS = ['in_app', 'email'];
 const BACKOFF_MINUTES = [1, 5, 15];
@@ -138,6 +145,8 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
   private async processPublication(event: OutboxEvent) {
     const publicationId = stringPayload(event, 'publicationId');
     if (!publicationId) return;
+    const locale = stringPayload(event, 'locale');
+    if (!locale) throw new Error('Publication locale is required');
 
     const publication = await this.publications.findOneBy({ id: publicationId });
     if (!publication || publication.status === 'published') return;
@@ -146,53 +155,81 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
     await this.publications.save(publication);
 
     try {
-      const artifacts = [
-        ['markdown', Buffer.from(publication.contentMarkdown), 'text/markdown'],
-        ['html', Buffer.from(publication.contentHtml), 'text/html'],
-        [
-          'json',
-          Buffer.from(
-            JSON.stringify({
-              publicationId: publication.id,
-              documentId: publication.documentId,
-              documentVersionId: publication.documentVersionId,
-              documentType: publication.documentType,
-              productId: publication.productId,
-              organizationId: publication.organizationId,
-              productTenantId: publication.productTenantId,
-              documentKey: publication.documentKey,
-              version: publication.version,
-              contentHash: publication.contentHash,
-              effectiveFrom: publication.effectiveFrom,
-              effectiveUntil: publication.effectiveUntil,
-            }),
-          ),
-          'application/json',
-        ],
-      ] as const;
-      const uploaded: Array<{
-        kind: PublicationArtifact;
-        ref: StorageObjectRef;
-      }> = [];
+      const context = {
+        issuerId: publication.issuerId,
+        productId: publication.productId,
+        locale,
+        organizationId: publication.organizationId,
+        tenantId: publication.productTenantId,
+        documentKey: publication.documentKey,
+        version: publication.version,
+      };
+      const uploaded: Array<{ kind: string; ref: StorageObjectRef }> = [];
+      const sourceRef = storageRefPayload(event.payload.sourceRef);
 
-      for (const [kind, body, contentType] of artifacts) {
-        const ref = await this.storage.putImmutable(
-          buildPublicationArtifactKey(
-            {
-              documentType: publication.documentType,
-              productId: publication.productId,
-              organizationId: publication.organizationId,
-              tenantId: publication.productTenantId,
-              documentKey: publication.documentKey,
-              version: publication.version,
-            },
-            kind as PublicationArtifact,
-          ),
-          body,
-          contentType,
+      if (sourceRef) {
+        const sourceBody = await this.storage.read(sourceRef);
+        const sourceHash = sha256(sourceBody);
+        if (sourceHash !== stringPayload(event, 'sourceHash')) {
+          throw new Error('Source hash does not match publication payload');
+        }
+        const sourceKind = stringPayload(event, 'sourceKind');
+        if (sourceKind !== 'pdf' && sourceKind !== 'html' && sourceKind !== 'markdown') {
+          throw new Error('Invalid legal source kind');
+        }
+        const analysis = analyzeLegalSource({
+          buffer: sourceBody,
+          mimetype: sourceRef.contentType,
+          originalname: stringPayload(event, 'sourceFileName') ?? 'source',
+          sourceKind,
+        });
+        if (analysis.contentHash !== publication.contentHash) {
+          throw new Error('Content hash does not match publication');
+        }
+
+        const finalSource = await this.storage.putImmutable(
+          buildPublicationSourceKey(context, sourceKind, sourceHash),
+          sourceBody,
+          sourceRef.contentType,
         );
-        uploaded.push({ kind, ref });
+        uploaded.push({ kind: 'source', ref: finalSource });
+
+        if (sourceKind === 'pdf') {
+          uploaded.push({ kind: 'pdf', ref: finalSource });
+        } else {
+          const html = sourceKind === 'html'
+            ? canonicalHtml(sanitizeHtml(sourceBody.toString('utf8')))
+            : renderMarkdown(sourceBody.toString('utf8'));
+          const htmlRef = await this.storage.putImmutable(
+            buildPublicationArtifactKey(context, 'html'),
+            Buffer.from(html, 'utf8'),
+            'text/html',
+          );
+          uploaded.push({ kind: 'html', ref: htmlRef });
+        }
+      } else {
+        throw new Error('Publication source reference is missing');
       }
+
+      const jsonRef = await this.storage.putImmutable(
+        buildPublicationArtifactKey(context, 'json'),
+        Buffer.from(JSON.stringify({
+          publicationId: publication.id,
+          documentId: publication.documentId,
+          documentVersionId: publication.documentVersionId,
+          documentType: publication.documentType,
+          applicationId: publication.applicationId,
+          locale,
+          documentKey: publication.documentKey,
+          version: publication.version,
+          sourceHash: stringPayload(event, 'sourceHash') ?? publication.sourceHash,
+          contentHash: publication.contentHash,
+          effectiveFrom: publication.effectiveFrom,
+          effectiveUntil: publication.effectiveUntil,
+        })),
+        'application/json',
+      );
+      uploaded.push({ kind: 'json', ref: jsonRef });
 
       const manifestHash = createHash('sha256')
         .update(JSON.stringify(uploaded.map(({ kind, ref }) => ({ kind, ref }))))
@@ -245,6 +282,13 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
         version.publishedAt = new Date();
         version.publishedByIdentityIssuer = 'storage-worker';
         version.publishedBySubjectId = current.id;
+        const sourceAsset = uploaded.find((asset) => asset.kind === 'source');
+        if (sourceAsset) {
+          version.sourceS3Bucket = sourceAsset.ref.bucket;
+          version.sourceS3ObjectKey = sourceAsset.ref.key;
+          version.sourceS3VersionId = sourceAsset.ref.versionId;
+          version.sourceS3Etag = sourceAsset.ref.etag;
+        }
         await versions.save(version);
 
         await rules.save(
@@ -458,6 +502,23 @@ function recipientForRule(rule: LegalAcceptanceRule) {
 function stringPayload(event: OutboxEvent, key: string) {
   const value = event.payload[key];
   return typeof value === 'string' ? value : null;
+}
+
+function storageRefPayload(value: unknown): StorageObjectRef | null {
+  if (!value || typeof value !== 'object') return null;
+  const ref = value as Partial<StorageObjectRef>;
+  if (
+    typeof ref.bucket !== 'string' ||
+    typeof ref.key !== 'string' ||
+    (typeof ref.versionId !== 'string' && ref.versionId !== null) ||
+    (typeof ref.etag !== 'string' && ref.etag !== null) ||
+    typeof ref.contentType !== 'string' ||
+    typeof ref.size !== 'number' ||
+    typeof ref.sha256 !== 'string'
+  ) {
+    throw new Error('Invalid PDF storage reference');
+  }
+  return ref as StorageObjectRef;
 }
 
 function stringValue(value: unknown) {

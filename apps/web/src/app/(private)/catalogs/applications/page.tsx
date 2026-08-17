@@ -39,10 +39,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -510,56 +508,83 @@ function ApplicationTable({
                 </span>
               )}
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuRadioGroup
-                value={draftStatusFilter}
-                onValueChange={(value) => setDraftStatusFilter(value as ApplicationFilterStatus)}
-              >
-                <DropdownMenuLabel>Estado</DropdownMenuLabel>
-                <DropdownMenuRadioItem value="active" closeOnClick={false}>
-                  Activas
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="inactive" closeOnClick={false}>
-                  Inactivas
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="archived" closeOnClick={false}>
-                  Archivadas
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="all" closeOnClick={false}>
-                  Todas
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuRadioGroup
-                value={draftIssuerFilter}
-                onValueChange={setDraftIssuerFilter}
-              >
-                <DropdownMenuLabel>Emisor</DropdownMenuLabel>
-                <DropdownMenuRadioItem value="all" closeOnClick={false}>
-                  Todos los emisores
-                </DropdownMenuRadioItem>
-                {issuers.map((issuer) => (
-                  <DropdownMenuRadioItem key={issuer.id} value={issuer.id} closeOnClick={false}>
-                    {issuer.name}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={!hasFilters} onClick={clearFilters}>
-                <RotateCcw className="size-4" aria-hidden="true" />
-                Limpiar filtros
-              </DropdownMenuItem>
-              <Button
-                className="mt-2 w-full disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
-                disabled={!hasPendingFilterChanges}
-                onClick={() => {
-                  onIssuerChange(draftIssuerFilter);
-                  onStatusChange(draftStatusFilter);
-                  setFiltersOpen(false);
-                }}
-              >
-                Aplicar filtros
-              </Button>
+            <DropdownMenuContent align="end" className="w-[min(22rem,calc(100vw-2rem))] overflow-hidden p-0">
+              <div className="border-b border-border bg-muted/30 px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold">Filtros</p>
+                  {visibleFilterCount > 0 && <Badge variant="secondary">{visibleFilterCount}</Badge>}
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Refina las aplicaciones por estado o emisor.
+                </p>
+              </div>
+              <div className="max-h-[min(20rem,60vh)] space-y-2 overflow-y-auto p-2">
+                <div className="rounded-md border border-border bg-card p-1">
+                  <p className="px-3 pb-0.5 pt-1 text-2xs font-semibold uppercase text-muted-foreground">
+                    Estado
+                  </p>
+                  <DropdownMenuRadioGroup
+                    value={draftStatusFilter}
+                    onValueChange={(value) => setDraftStatusFilter(value as ApplicationFilterStatus)}
+                  >
+                    <DropdownMenuRadioItem className="min-h-9 px-3" value="active" closeOnClick={false}>
+                      Activas
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem className="min-h-9 px-3" value="inactive" closeOnClick={false}>
+                      Inactivas
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem className="min-h-9 px-3" value="archived" closeOnClick={false}>
+                      Archivadas
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem className="min-h-9 px-3" value="all" closeOnClick={false}>
+                      Todas
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </div>
+                <div className="rounded-md border border-border bg-card p-1">
+                  <p className="px-3 pb-0.5 pt-1 text-2xs font-semibold uppercase text-muted-foreground">
+                    Emisor
+                  </p>
+                  <DropdownMenuRadioGroup
+                    value={draftIssuerFilter}
+                    onValueChange={setDraftIssuerFilter}
+                  >
+                    <DropdownMenuRadioItem className="min-h-9 px-3" value="all" closeOnClick={false}>
+                      Todos los emisores
+                    </DropdownMenuRadioItem>
+                    {issuers.map((issuer) => (
+                      <DropdownMenuRadioItem className="min-h-9 px-3" key={issuer.id} value={issuer.id} closeOnClick={false}>
+                        {issuer.name}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 border-t border-border p-2">
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="flex-1 px-1 text-muted-foreground hover:text-foreground disabled:bg-transparent disabled:text-muted-foreground"
+                  disabled={!hasFilters}
+                  onClick={clearFilters}
+                >
+                  Limpiar
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="flex-1 disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+                  disabled={!hasPendingFilterChanges}
+                  onClick={() => {
+                    onIssuerChange(draftIssuerFilter);
+                    onStatusChange(draftStatusFilter);
+                    setFiltersOpen(false);
+                  }}
+                >
+                  Aplicar
+                </Button>
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
           <DropdownMenu>

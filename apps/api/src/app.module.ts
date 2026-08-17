@@ -11,7 +11,7 @@ import { LegalModule } from './modules/legal/legal.module';
 import storageConfig from './config/storage.config';
 import { StorageModule } from './modules/storage/storage.module';
 import eventBusConfig from './config/event-bus.config';
-// import { WidgetsModule } from './modules/widgets/widgets.module';
+import { SecretsModule } from './modules/secrets/secrets.module';
 
 @Module({
   imports: [
@@ -28,9 +28,9 @@ import eventBusConfig from './config/event-bus.config';
     }),
     AuthModule,
     StorageModule,
+    SecretsModule,
     DatabaseModule,
     LegalModule,
-    /* WidgetsModule */
   ],
   controllers: [AppController],
   providers: [AppService],

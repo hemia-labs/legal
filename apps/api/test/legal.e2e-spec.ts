@@ -94,16 +94,22 @@ describe('Legal catalog (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/v1/legal/documents/${document.id}/draft`)
       .set(headers)
-      .send({ contentMarkdown: '# v1' })
+      .attach('file', Buffer.from('# v1'), {
+        filename: 'terms.md',
+        contentType: 'text/markdown',
+      })
       .expect(201);
 
     await request(app.getHttpServer())
       .patch(`/v1/legal/documents/${document.id}/draft`)
       .set(headers)
-      .send({ contentMarkdown: '# v2' })
+      .attach('file', Buffer.from('# v2'), {
+        filename: 'terms.md',
+        contentType: 'text/markdown',
+      })
       .expect(200)
-      .expect(({ body }: { body: { contentMarkdown: string } }) => {
-        expect(body.contentMarkdown).toBe('# v2');
+      .expect(({ body }: { body: { sourceKind: string } }) => {
+        expect(body.sourceKind).toBe('markdown');
       });
   });
 
@@ -284,6 +290,16 @@ describe('Legal catalog (e2e)', () => {
   });
 
   it('rejects duplicate document key and locale in the same context', async () => {
+    await request(app.getHttpServer())
+      .get('/v1/legal/document-types')
+      .set(headers)
+      .expect(200)
+      .expect(({ body }: { body: { code: string }[] }) => {
+        expect(body.map(({ code }) => code)).toEqual(
+          expect.arrayContaining(['custom_policy', 'terms']),
+        );
+      });
+
     const issuer = await createIssuer(app, 'issuer_hemia');
     const application = await request(app.getHttpServer())
       .post('/v1/legal/applications')
@@ -303,6 +319,12 @@ describe('Legal catalog (e2e)', () => {
     await request(app.getHttpServer())
       .post('/v1/legal/documents')
       .set(headers)
+      .send({ ...payload, documentType: 'unknown_type' })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post('/v1/legal/documents')
+      .set(headers)
       .send(payload)
       .expect(201);
 
@@ -313,12 +335,231 @@ describe('Legal catalog (e2e)', () => {
       .expect(409);
   });
 
+  it('lists, updates and archives documents with an idempotent archive', async () => {
+    const document = await createDocument(app, 'terms');
+
+    await request(app.getHttpServer())
+      .get('/v1/legal/documents')
+      .query({
+        issuerId: document.issuerId,
+        applicationId: document.applicationId,
+      })
+      .set(headers)
+      .expect(200)
+      .expect(({ body }: { body: Array<{ id: string; status: string }> }) => {
+        expect(body).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: document.id, status: 'active' }),
+          ]),
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/v1/legal/documents/${document.id}`)
+      .set(headers)
+      .send({ title: 'Terminos actualizados' })
+      .expect(200)
+      .expect(({ body }: { body: { title: string } }) => {
+        expect(body.title).toBe('Terminos actualizados');
+      });
+
+    await request(app.getHttpServer())
+      .delete(`/v1/legal/documents/${document.id}`)
+      .set(headers)
+      .expect(204);
+
+    await request(app.getHttpServer())
+      .get('/v1/legal/documents')
+      .query({
+        issuerId: document.issuerId,
+        applicationId: document.applicationId,
+      })
+      .set(headers)
+      .expect(200)
+      .expect(({ body }: { body: Array<{ id: string; status: string }> }) => {
+        expect(body).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: document.id, status: 'archived' }),
+          ]),
+        );
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/v1/legal/documents/${document.id}`)
+      .set(headers)
+      .send({ title: 'No permitido' })
+      .expect(409);
+
+    await request(app.getHttpServer())
+      .delete(`/v1/legal/documents/${document.id}`)
+      .set(headers)
+      .expect(409);
+  });
+
+  it('enforces document permissions independently', async () => {
+    const issuer = await createIssuer(app, 'issuer_permissions');
+    const application = await request(app.getHttpServer())
+      .post('/v1/legal/applications')
+      .set(headers)
+      .send({ issuerId: issuer.id, key: 'app_loop_prod', name: 'Loop' })
+      .expect(201)
+      .then((response) => response.body as { id: string });
+    const payload = {
+      issuerId: issuer.id,
+      applicationId: application.id,
+      key: 'terms',
+      locale: 'es-MX',
+      title: 'Terminos',
+    };
+
+    await request(app.getHttpServer())
+      .post('/v1/legal/documents')
+      .set({ ...headers, 'x-permissions': 'legal.documents.view' })
+      .send(payload)
+      .expect(403);
+
+    const document = await request(app.getHttpServer())
+      .post('/v1/legal/documents')
+      .set({ ...headers, 'x-permissions': 'legal.documents.create' })
+      .send(payload)
+      .expect(201)
+      .then((response) => response.body as { id: string });
+
+    await request(app.getHttpServer())
+      .get('/v1/legal/documents')
+      .set({ ...headers, 'x-permissions': 'legal.documents.view' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/v1/legal/documents/${document.id}`)
+      .set({ ...headers, 'x-permissions': 'legal.documents.view' })
+      .send({ title: 'No permitido' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/v1/legal/documents/${document.id}`)
+      .set({ ...headers, 'x-permissions': 'legal.documents.edit' })
+      .send({ title: 'Permitido' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/v1/legal/documents/${document.id}`)
+      .set({ ...headers, 'x-permissions': 'legal.documents.edit' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .delete(`/v1/legal/documents/${document.id}`)
+      .set({ ...headers, 'x-permissions': 'legal.documents.archive' })
+      .expect(204);
+  });
+
+  it('resolves public documents by required locale', async () => {
+    const issuer = await createIssuer(app, 'issuer_locales');
+    const application = await request(app.getHttpServer())
+      .post('/v1/legal/applications')
+      .set(headers)
+      .send({ issuerId: issuer.id, key: 'app_loop_prod', name: 'Loop' })
+      .expect(201)
+      .then((response) => response.body as { id: string });
+    const base = {
+      issuerId: issuer.id,
+      applicationId: application.id,
+      key: 'terms',
+      title: 'Terms',
+      documentType: 'terms_and_conditions',
+    };
+    const spanish = await request(app.getHttpServer())
+      .post('/v1/legal/documents')
+      .set(headers)
+      .send({ ...base, locale: 'es-MX', title: 'Terminos' })
+      .expect(201)
+      .then((response) => response.body as { id: string });
+    const english = await request(app.getHttpServer())
+      .post('/v1/legal/documents')
+      .set(headers)
+      .send({ ...base, locale: 'en-US', title: 'Terms' })
+      .expect(201)
+      .then((response) => response.body as { id: string });
+
+    await publishVersion(app, spanish.id, '1.0.0', '# Terminos');
+    await publishVersion(app, english.id, '1.0.0', '# Terms');
+    await worker.processPending();
+
+    await request(app.getHttpServer())
+      .get(`/v1/legal/public/${application.id}/documents/terms`)
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .get(`/v1/legal/public/${application.id}/documents/terms`)
+      .query({ locale: 'es-MX' })
+      .expect(200)
+      .expect(({ body }: {
+        body: {
+          document: { locale: string; title: string };
+          publication: Record<string, unknown>;
+        };
+      }) => {
+        expect(body.document).toMatchObject({
+          locale: 'es-MX',
+          title: 'Terminos',
+        });
+        expect(body.publication).not.toHaveProperty('organizationId');
+        expect(body.publication).not.toHaveProperty('productTenantId');
+      });
+
+    await request(app.getHttpServer())
+      .get(`/v1/legal/public/${application.id}/documents/terms/versions/1.0.0`)
+      .query({ locale: 'en-US' })
+      .expect(200)
+      .expect(({ body }: { body: { document: { locale: string; title: string } } }) => {
+        expect(body.document).toMatchObject({
+          locale: 'en-US',
+          title: 'Terms',
+        });
+      });
+  });
+
+  it('publishes an optional PDF artifact for applications', async () => {
+    const document = await createDocument(app, 'pdfterms');
+    await request(app.getHttpServer())
+      .post(`/v1/legal/documents/${document.id}/draft`)
+      .set(headers)
+      .attach('file', Buffer.from('%PDF-1.7\nlegal'), {
+        filename: 'terms.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/v1/legal/documents/${document.id}/draft/publish`)
+      .set(headers)
+      .send(publishPayload('1.0.0'))
+      .expect(201);
+    await worker.processPending();
+
+    await request(app.getHttpServer())
+      .get(`/v1/legal/public/${document.applicationId}/documents/${document.key}`)
+      .query({ locale: 'es-MX' })
+      .expect(200)
+      .expect(
+        ({ body }: { body: { artifacts: { pdf?: { contentType: string; sha256: string } } } }) => {
+          expect(body.artifacts.pdf).toMatchObject({
+            contentType: 'application/pdf',
+          });
+          expect(body.artifacts.pdf?.sha256).toMatch(/^[a-f0-9]{64}$/);
+        },
+      );
+  });
+
   it('previews and publishes a draft with rule, audit and outbox', async () => {
     const document = await createDocument(app, 'terms');
     await request(app.getHttpServer())
       .post(`/v1/legal/documents/${document.id}/draft`)
       .set(headers)
-      .send({ contentMarkdown: '# Terminos\n<script>alert(1)</script>' })
+      .attach('file', Buffer.from('# Terminos\n<script>alert(1)</script>'), {
+        filename: 'terms.md',
+        contentType: 'text/markdown',
+      })
       .expect(201);
 
     const payload = publishPayload('1.0.0');
@@ -339,16 +580,10 @@ describe('Legal catalog (e2e)', () => {
       .expect(201)
       .then(
         (response) =>
-          response.body as {
-            version: { id: string; contentHash: string; contentHtml: string };
-            rules: unknown[];
-            outboxEventId: string;
-          },
+          response.body as { contentHash: string; outboxEventId: string },
       );
 
-    expect(published.version.contentHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(published.version.contentHtml).not.toContain('<script>');
-    expect(published.rules).toHaveLength(1);
+    expect(published.contentHash).toMatch(/^[a-f0-9]{64}$/);
     expect(published.outboxEventId).toBeTruthy();
 
     await request(app.getHttpServer())
@@ -385,7 +620,10 @@ describe('Legal catalog (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/v1/legal/documents/${document.id}/draft`)
       .set(headers)
-      .send({ contentMarkdown: '# v1' })
+      .attach('file', Buffer.from('# v1'), {
+        filename: 'terms.md',
+        contentType: 'text/markdown',
+      })
       .expect(201);
 
     await request(app.getHttpServer())
@@ -634,7 +872,10 @@ describe('Legal catalog (e2e)', () => {
       });
 
     await request(app.getHttpServer())
-      .get(`/v1/legal/public/${document.applicationId}/documents/${document.key}`)
+      .get(
+        `/v1/legal/public/${document.applicationId}/documents/${document.key}`,
+      )
+      .query({ locale: 'es-MX' })
       .expect(200)
       .expect(
         ({
@@ -651,6 +892,18 @@ describe('Legal catalog (e2e)', () => {
       `SELECT count(*)::int AS count FROM audit_events WHERE action = 'legal.evidence.export'`,
     )) as [{ count: number }];
     expect(auditCount.count).toBe(1);
+
+    await request(app.getHttpServer())
+      .delete(`/v1/legal/documents/${document.id}`)
+      .set(headers)
+      .expect(204);
+
+    await request(app.getHttpServer())
+      .get(
+        `/v1/legal/public/${document.applicationId}/documents/${document.key}`,
+      )
+      .query({ locale: 'es-MX' })
+      .expect(404);
   });
 });
 
@@ -749,7 +1002,10 @@ async function publishVersion(
   await request(app.getHttpServer())
     .post(`/v1/legal/documents/${documentId}/draft`)
     .set(headers)
-    .send({ contentMarkdown: markdown })
+    .attach('file', Buffer.from(markdown), {
+      filename: 'terms.md',
+      contentType: 'text/markdown',
+    })
     .expect(201);
 
   return request(app.getHttpServer())

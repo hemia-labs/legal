@@ -9,8 +9,125 @@ import { LegalPublication } from '../../../src/modules/legal/entities/legal-publ
 import { LegalPublicationAsset } from '../../../src/modules/legal/entities/legal-publication-asset.entity';
 import { OutboxEvent } from '../../../src/modules/legal/entities/outbox-event.entity';
 import { LegalOutboxWorker } from '../../../src/modules/legal/workers/legal-outbox.worker';
+import { analyzeLegalSource } from '../../../src/modules/legal/helpers/legal-source.helper';
 
 describe('LegalOutboxWorker publication uploads', () => {
+  it('publishes an HTML source as a private source asset and safe HTML artifact', async () => {
+    const outbox = new Repo<OutboxEvent>();
+    const rules = new Repo<LegalAcceptanceRule>();
+    const notifications = new Repo<LegalNotification>();
+    const publications = new Repo<LegalPublication>();
+    const assets = new Repo<LegalPublicationAsset>();
+    const evidences = new Repo<LegalEvidence>();
+    const acceptances = new Repo<LegalAcceptance>();
+    const versions = new Repo<LegalDocumentVersion>();
+    const audits = new Repo<AuditEvent>();
+    const sourceBody = Buffer.from('<h1>Terms</h1><script>alert(1)</script>');
+    const analysis = analyzeLegalSource({
+      buffer: sourceBody,
+      mimetype: 'text/html',
+      originalname: 'terms.html',
+    });
+    const stored = new Map<string, ReturnType<typeof ref>>();
+    const storage = {
+      read: async () => sourceBody,
+      putImmutable: async (key: string, body: Buffer, contentType: string) => {
+        const existing = stored.get(key);
+        if (existing) return existing;
+        const next = ref(key, body, contentType);
+        stored.set(key, next);
+        return next;
+      },
+    };
+
+    await versions.save({
+      id: 'version-html',
+      documentId: 'document-html',
+      version: '1.0.0',
+      status: 'draft',
+      contentHash: analysis.contentHash,
+      sourceHash: analysis.sourceHash,
+      sourceKind: 'html',
+      sourceContentType: 'text/html',
+      sourceFileName: 'terms.html',
+      sourceSizeBytes: sourceBody.length,
+      effectiveFrom: new Date('2026-08-01T00:00:00Z'),
+    } as LegalDocumentVersion);
+    await publications.save({
+      id: 'publication-html',
+      documentId: 'document-html',
+      documentVersionId: 'version-html',
+      issuerId: 'issuer-html',
+      applicationId: 'application-html',
+      documentType: 'terms',
+      productId: 'application-html',
+      organizationId: null,
+      productTenantId: null,
+      documentKey: 'terms',
+      version: '1.0.0',
+      status: 'pending',
+      effectiveFrom: new Date('2026-08-01T00:00:00Z'),
+      effectiveUntil: null,
+      acceptanceDeadline: null,
+      gracePeriodDays: 0,
+      rulesSnapshot: [{ acceptanceMode: 'individual' }],
+      contentMarkdown: null,
+      contentHtml: null,
+      contentHash: analysis.contentHash,
+      sourceKind: 'html',
+      sourceHash: analysis.sourceHash,
+      manifestHash: null,
+      requestedByIdentityIssuer: 'dev',
+      requestedBySubjectId: 'user',
+      publishedByIdentityIssuer: null,
+      publishedBySubjectId: null,
+      publishedAt: null,
+      failureReason: null,
+    } as LegalPublication);
+
+    const worker = new LegalOutboxWorker(
+      outbox,
+      rules,
+      notifications,
+      publications,
+      assets,
+      evidences,
+      acceptances,
+      dataSource([
+        [LegalPublication, publications],
+        [LegalPublicationAsset, assets],
+        [LegalDocumentVersion, versions],
+        [LegalAcceptanceRule, rules],
+        [AuditEvent, audits],
+        [OutboxEvent, outbox],
+      ]),
+      storage,
+    );
+    const event = {
+      id: 'event-html',
+      traceId: 'trace-html',
+      eventType: 'legal.publication.requested',
+      payload: {
+        publicationId: 'publication-html',
+        locale: 'es-MX',
+        sourceKind: 'html',
+        sourceHash: analysis.sourceHash,
+        sourceFileName: 'terms.html',
+        sourceRef: ref('draft-source.html', sourceBody, 'text/html'),
+      },
+      status: 'pending',
+      attemptCount: 0,
+      nextRunAt: null,
+      processedAt: null,
+    } as OutboxEvent;
+
+    await (worker as any).processEvent(event);
+
+    expect(publications.rows[0].status).toBe('published');
+    expect(assets.rows.map((asset) => asset.kind).sort()).toEqual(['html', 'json', 'source']);
+    expect(versions.rows[0].sourceS3ObjectKey).toContain('/source/');
+  });
+
   it('marks a failed upload and completes an idempotent retry', async () => {
     const outbox = new Repo<OutboxEvent>();
     const rules = new Repo<LegalAcceptanceRule>();
@@ -21,9 +138,16 @@ describe('LegalOutboxWorker publication uploads', () => {
     const acceptances = new Repo<LegalAcceptance>();
     const versions = new Repo<LegalDocumentVersion>();
     const audits = new Repo<AuditEvent>();
+    const sourceBody = Buffer.from('<h1>v2</h1>');
+    const sourceAnalysis = analyzeLegalSource({
+      buffer: sourceBody,
+      mimetype: 'text/html',
+      originalname: 'terms.html',
+    });
     let failHtml = true;
     const stored = new Map<string, ReturnType<typeof ref>>();
     const storage = {
+      read: async () => sourceBody,
       putImmutable: async (key: string, body: Buffer, contentType: string) => {
         if (failHtml && key.endsWith('/html.html')) throw new Error('S3 unavailable');
         const existing = stored.get(key);
@@ -54,9 +178,14 @@ describe('LegalOutboxWorker publication uploads', () => {
       documentId: 'document-1',
       version: '2.0.0',
       status: 'draft',
-      contentMarkdown: '# v2',
-      contentHtml: '<h1>v2</h1>',
-      contentHash: 'a'.repeat(64),
+      contentMarkdown: null,
+      contentHtml: null,
+      contentHash: sourceAnalysis.contentHash,
+      sourceKind: 'html',
+      sourceContentType: 'text/html',
+      sourceFileName: 'terms.html',
+      sourceSizeBytes: sourceBody.length,
+      sourceHash: sourceAnalysis.sourceHash,
       effectiveFrom: new Date('2026-07-01T00:00:00Z'),
       createdAt: new Date('2026-07-01T00:00:00Z'),
     } as LegalDocumentVersion);
@@ -78,9 +207,11 @@ describe('LegalOutboxWorker publication uploads', () => {
       acceptanceDeadline: null,
       gracePeriodDays: 0,
       rulesSnapshot: [{ acceptanceMode: 'individual' }],
-      contentMarkdown: '# v2',
-      contentHtml: '<h1>v2</h1>',
-      contentHash: 'a'.repeat(64),
+      contentMarkdown: null,
+      contentHtml: null,
+      contentHash: sourceAnalysis.contentHash,
+      sourceKind: 'html',
+      sourceHash: sourceAnalysis.sourceHash,
       manifestHash: null,
       requestedByIdentityIssuer: 'dev',
       requestedBySubjectId: 'user',
@@ -112,7 +243,18 @@ describe('LegalOutboxWorker publication uploads', () => {
       id: 'event-1',
       traceId: 'trace-1',
       eventType: 'legal.publication.requested',
-      payload: { publicationId: 'publication-1' },
+      payload: {
+        publicationId: 'publication-1',
+        locale: 'es-MX',
+        sourceKind: 'html',
+        sourceHash: sourceAnalysis.sourceHash,
+        sourceFileName: 'terms.html',
+        sourceRef: ref(
+          'documents/issuer-1/application-1/es-mx/global/global/terms/draft/source.html',
+          sourceBody,
+          'text/html',
+        ),
+      },
       status: 'pending',
       attemptCount: 0,
       nextRunAt: null,
@@ -137,7 +279,11 @@ describe('LegalOutboxWorker publication uploads', () => {
       'published',
     );
     expect(assets.rows).toHaveLength(3);
+    expect(assets.rows.some((asset) => asset.kind === 'pdf')).toBe(false);
     expect(assets.rows.every((asset) => asset.s3VersionId)).toBe(true);
+
+    await (worker as any).processEvent(event);
+    expect(assets.rows).toHaveLength(3);
   });
 
   it('generates acceptance evidence with the stored hash and context', async () => {

@@ -19,6 +19,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { LEGAL_DOCUMENT_TYPE_CODES } from '../constants/document-types';
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -223,6 +224,7 @@ export class CreateDocumentDto {
   @IsString()
   @MinLength(2)
   @MaxLength(12)
+  @IsLocale()
   locale: string;
 
   @IsString()
@@ -232,6 +234,7 @@ export class CreateDocumentDto {
 
   @IsOptional()
   @IsString()
+  @IsIn(LEGAL_DOCUMENT_TYPE_CODES)
   @MinLength(2)
   @MaxLength(40)
   documentType?: string;
@@ -253,6 +256,12 @@ export class DocumentFilterDto {
   @IsOptional()
   @IsUUID()
   applicationId?: string;
+}
+
+export class PublicDocumentQueryDto {
+  @IsLocale()
+  @MaxLength(12)
+  locale: string;
 }
 
 export class NotificationFilterDto extends DocumentFilterDto {
@@ -277,11 +286,10 @@ export class AcceptanceExportFilterDto extends ApplicationFilterDto {
   format?: string;
 }
 
-export class UpsertDraftDto {
-  @IsString()
-  @MinLength(1)
-  @MaxLength(100000)
-  contentMarkdown: string;
+export class SourceUploadMetadataDto {
+  @IsOptional()
+  @IsIn(['pdf', 'html', 'markdown'])
+  sourceKind?: 'pdf' | 'html' | 'markdown';
 }
 
 export class AcceptanceRuleInputDto {
@@ -363,7 +371,7 @@ export class MePendingQueryDto {
   productTenantId?: string;
 
   @IsOptional()
-  @IsString()
+  @IsLocale()
   @MaxLength(12)
   locale?: string;
 }
@@ -404,7 +412,7 @@ export class CreateAcceptanceDto {
   productTenantId?: string;
 
   @IsOptional()
-  @IsString()
+  @IsLocale()
   @MaxLength(12)
   locale?: string;
 }
