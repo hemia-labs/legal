@@ -6,7 +6,6 @@ import { LegalAcceptanceRule } from './entities/legal-acceptance-rule.entity';
 import { LegalApplication } from './entities/legal-application.entity';
 import { LegalDocument } from './entities/legal-document.entity';
 import { LegalDocumentVersion } from './entities/legal-document-version.entity';
-import { LegalEvidence } from './entities/legal-evidence.entity';
 import { LegalIssuer } from './entities/legal-issuer.entity';
 import { LegalNotification } from './entities/legal-notification.entity';
 import { LegalPublication } from './entities/legal-publication.entity';
@@ -52,7 +51,6 @@ import { LegalEventBusHealthController } from './controllers/legal-event-bus-hea
       OutboxEvent,
       LegalPublication,
       LegalPublicationAsset,
-      LegalEvidence,
       LegalProductTenant,
       LegalRole,
       LegalRolePermission,

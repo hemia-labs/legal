@@ -1,26 +1,20 @@
 import {
-  buildEvidenceKey,
   buildPublicationArtifactKey,
   buildPublicationSourceKey,
 } from '../../../src/modules/storage/types/storage.types';
 
 describe('storage keys', () => {
-  it('builds deterministic publication keys with metadata.json', () => {
+  it('builds deterministic publication artifact keys by document and version', () => {
     expect(
       buildPublicationArtifactKey(
         {
-          issuerId: 'Issuer',
-          productId: 'Loop',
-          locale: 'es-MX',
-          organizationId: null,
-          tenantId: 'Tenant 1',
-          documentKey: 'privacy_policy',
+          documentId: 'Document 1',
           version: '1.0.0',
         },
-        'json',
+        'html',
       ),
     ).toBe(
-      'documents/issuer/loop/es-mx/global/tenant-1/privacy_policy/1.0.0/metadata.json',
+      'legal/documents/document-1/versions/1.0.0/html.html',
     );
   });
 
@@ -28,27 +22,18 @@ describe('storage keys', () => {
     expect(() =>
       buildPublicationArtifactKey(
         {
-          issuerId: '../terms',
-          productId: 'loop',
-          locale: 'es-MX',
-          documentKey: 'terms',
+          documentId: '../terms',
           version: '1.0.0',
         },
         'html',
       ),
     ).toThrow();
-    expect(buildEvidenceKey('issuer', 'application', 'acceptance')).toBe(
-      'evidence/issuer/application/global/global/acceptance/evidence.json',
-    );
   });
 
-  it('isolates source keys by issuer, application, locale and version', () => {
+  it('builds draft source keys separately from published versions', () => {
     const key = buildPublicationSourceKey(
       {
-        issuerId: 'issuer-1',
-        productId: 'application-1',
-        locale: 'es-MX',
-        documentKey: 'terms',
+        documentId: 'document-1',
         version: '1.0.0',
       },
       'html',
@@ -56,7 +41,17 @@ describe('storage keys', () => {
     );
 
     expect(key).toBe(
-      'documents/issuer-1/application-1/es-mx/global/global/terms/1.0.0/source/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.html',
+      'legal/documents/document-1/versions/1.0.0/source/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.html',
+    );
+
+    expect(
+      buildPublicationSourceKey(
+        { documentId: 'document-1', version: 'draft' },
+        'markdown',
+        'b'.repeat(64),
+      ),
+    ).toBe(
+      'legal/documents/document-1/draft/source/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.md',
     );
   });
 });

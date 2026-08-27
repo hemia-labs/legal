@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   LegalDocument,
+  DocumentTypeOption,
   LegalDraft,
   LegalVersion,
   PublicationPreview,
@@ -28,9 +29,11 @@ import {
   SourceKind,
   getDocument,
   getDocumentDraft,
+  listDocumentTypes,
   listVersions,
   previewPublication,
   publishDraft,
+  sourceKindFor,
   uploadDocumentSource,
 } from "@/services/document.service";
 
@@ -42,6 +45,7 @@ export default function DocumentDetailPage() {
   const router = useRouter();
   const session = useLegalSession();
   const [document, setDocument] = useState<LegalDocument | null>(null);
+  const [policy, setPolicy] = useState<DocumentTypeOption | null>(null);
   const [draft, setDraft] = useState<LegalDraft | null>(null);
   const [versions, setVersions] = useState<LegalVersion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,8 +83,9 @@ export default function DocumentDetailPage() {
     else setLoading(true);
     setError("");
     try {
-      const [documentRow, versionRows] = await Promise.all([getDocument(documentId), listVersions(documentId)]);
+      const [documentRow, versionRows, typeRows] = await Promise.all([getDocument(documentId), listVersions(documentId), listDocumentTypes()]);
       setDocument(documentRow);
+      setPolicy(typeRows.find(({ code }) => code === documentRow.documentType) ?? null);
       setVersions(versionRows);
       try {
         setDraft(await getDocumentDraft(documentId));
@@ -118,8 +123,8 @@ export default function DocumentDetailPage() {
       return;
     }
     const kind = sourceKindFor(selected);
-    if (!kind) {
-      setFileError("Formato no soportado. Usa PDF, HTML o Markdown técnico.");
+    if (!kind || (policy && !policy.allowedSourceKinds.includes(kind))) {
+      setFileError(`Formato no permitido. Este tipo acepta: ${policy?.allowedSourceKinds.join(", ") ?? "ninguno"}.`);
       setSourceKind(null);
       return;
     }
@@ -152,7 +157,7 @@ export default function DocumentDetailPage() {
       ...(until ? { effectiveUntil: until } : {}),
       ...(deadline ? { acceptanceDeadline: deadline } : {}),
       gracePeriodDays: Number(gracePeriodDays) || 0,
-      rules: [{ acceptanceMode, isBlocking }],
+      ...(policy?.acceptance === "optional" ? {} : { rules: [{ acceptanceMode, isBlocking }] }),
     };
   }
 
@@ -198,7 +203,8 @@ export default function DocumentDetailPage() {
             <h1 className="font-display text-4xl font-semibold leading-none">{document.title}</h1>
             <Badge variant={isArchived ? "neutral" : "success"}>{isArchived ? "Archivado" : "Activo"}</Badge>
           </div>
-          <p className="mt-2 font-mono text-sm text-muted-foreground">{document.key} · {document.locale} · {document.documentType}</p>
+          <p className="mt-2 font-mono text-sm text-muted-foreground">{document.key} · {document.locale} · {document.documentType} · {document.documentVariant}</p>
+          <p className="mt-1 text-sm text-muted-foreground">Flujo: {policy?.workflow === "internal" ? "interno" : "público"} · Fuentes: {policy?.allowedSourceKinds.join(", ")}</p>
         </div>
         <Button variant="outline" className="h-12" onClick={() => void load(true)} disabled={refreshing}>
           {refreshing ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
@@ -215,13 +221,13 @@ export default function DocumentDetailPage() {
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-lg border border-border bg-card p-6 shadow-sm">
           <SectionTitle icon={<Upload className="size-4" />} title={draft ? "Reemplazar fuente" : "Cargar fuente"} />
-          <p className="mt-1 text-sm text-muted-foreground">PDF, HTML o Markdown técnico. Tamaño máximo: 10 MiB.</p>
+          <p className="mt-1 text-sm text-muted-foreground">{policy?.allowedSourceKinds.join(", ")} · Tamaño máximo: 10 MiB.</p>
           <form onSubmit={uploadSource} className="mt-5 space-y-4">
             <label className="block">
               <span className="mb-1.5 block text-sm font-medium">Archivo fuente</span>
               <Input
                 type="file"
-                accept=".pdf,.html,.htm,.md,.markdown,application/pdf,text/html,text/markdown"
+                accept={acceptAttribute(policy?.allowedSourceKinds ?? [])}
                 className="h-12 cursor-pointer py-2"
                 onChange={(event) => selectFile(event.target.files?.[0])}
                 disabled={isArchived || (!draft ? !canUpload : !canReplace)}
@@ -260,12 +266,12 @@ export default function DocumentDetailPage() {
         <SectionTitle icon={<Rocket className="size-4" />} title="Publicar versión" />
         <p className="mt-1 text-sm text-muted-foreground">La publicación se procesa de forma asíncrona y genera artefactos seguros en S3.</p>
         <form onSubmit={previewDraft} className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <Field label="Versión"><Input className="h-12" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" /></Field>
+          <Field label="Versión"><Input className="h-12" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" pattern="^\\d+\\.\\d+\\.\\d+$" aria-invalid={!/^\d+\.\d+\.\d+$/.test(version)} /></Field>
           <Field label="Fecha efectiva"><Input className="h-12" type="datetime-local" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} /></Field>
           <Field label="Fecha de expiración"><Input className="h-12" type="datetime-local" value={effectiveUntil} onChange={(event) => setEffectiveUntil(event.target.value)} /></Field>
           <Field label="Deadline de aceptación"><Input className="h-12" type="datetime-local" value={acceptanceDeadline} onChange={(event) => setAcceptanceDeadline(event.target.value)} /></Field>
           <Field label="Periodo de gracia (días)"><Input className="h-12" type="number" min="0" value={gracePeriodDays} onChange={(event) => setGracePeriodDays(event.target.value)} /></Field>
-          <Field label="Regla de aceptación">
+          {policy?.acceptance !== "optional" && <Field label="Regla de aceptación">
             <Select value={acceptanceMode} onValueChange={(value) => setAcceptanceMode(value as typeof acceptanceMode)}>
               <SelectTrigger className="h-12"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -274,13 +280,13 @@ export default function DocumentDetailPage() {
                 <SelectItem value="informational">Informativa</SelectItem>
               </SelectContent>
             </Select>
-          </Field>
-          <label className="flex h-12 items-center gap-3 text-sm font-medium md:col-span-2">
+          </Field>}
+          {policy?.acceptance !== "optional" && <label className="flex h-12 items-center gap-3 text-sm font-medium md:col-span-2">
             <input type="checkbox" checked={isBlocking} onChange={(event) => setIsBlocking(event.target.checked)} />
             La aceptación bloquea el acceso
-          </label>
+          </label>}
           <div className="flex flex-wrap gap-3 md:col-span-2 xl:col-span-3">
-            <Button className="h-12" type="submit" disabled={!draft || isArchived || !canPreview}>
+            <Button className="h-12" type="submit" disabled={!draft || isArchived || !canPreview || !/^\d+\.\d+\.\d+$/.test(version)}>
               <CheckCircle2 className="size-4" /> Previsualizar conflictos
             </Button>
             <Button className="h-12" type="button" variant="outline" onClick={() => void publish()} disabled={!preview?.canPublish || publishing || !canPublish}>
@@ -334,13 +340,6 @@ function DetailSkeleton() {
   return <div className="space-y-6" aria-busy="true"><Skeleton className="h-12 w-72" /><div className="grid gap-6 lg:grid-cols-2"><Skeleton className="h-64" /><Skeleton className="h-64" /></div><Skeleton className="h-80" /><Skeleton className="h-64" /></div>;
 }
 
-function sourceKindFor(file: File): SourceKind | null {
-  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) return "pdf";
-  if (file.type === "text/html" || /\.(html?|xhtml)$/i.test(file.name)) return "html";
-  if (file.type === "text/markdown" || /\.(md|markdown)$/i.test(file.name)) return "markdown";
-  return null;
-}
-
 function toIso(value: string) {
   if (!value) return null;
   const date = new Date(value);
@@ -361,4 +360,8 @@ function formatDate(value: string | null) {
 
 function hasPermission(granted: string[], required: string) {
   return granted.some((permission) => permission === "*.*" || permission === required || (permission.endsWith(".*") && required.startsWith(permission.slice(0, -1))));
+}
+
+function acceptAttribute(kinds: SourceKind[]) {
+  return kinds.map((kind) => ({ pdf: ".pdf,application/pdf", html: ".html,.htm,text/html", markdown: ".md,.markdown,text/markdown" }[kind])).join(",");
 }

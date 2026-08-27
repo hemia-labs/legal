@@ -29,14 +29,25 @@ type ProductAccess = {
 
 type StoredContext = LegalContext;
 
-const contextKey = (sessionId: string) => `legal:session-context:${sessionId}`;
-const sessionIndexKey = (issuer: string, subject: string) =>
-  `legal:user-sessions:${issuer}:${subject}`;
+type StoredSsoSession = {
+  user?: { iss?: string; sub?: string };
+  accessContext?: { identity?: { issuer?: string } };
+  legalContext?: StoredContext;
+};
+
+const sessionKey = (sessionId: string) => `sso:session:${sessionId}`;
+const STORE_CONTEXT_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local session = cjson.decode(raw)
+session.legalContext = cjson.decode(ARGV[1])
+redis.call('SET', KEYS[1], cjson.encode(session), 'KEEPTTL')
+return 1
+`;
 
 @Injectable()
 export class LegalContextService {
   private readonly productCode: string;
-  private readonly sessionTtlSeconds: number;
   private readonly accessRoleMap: Map<string, string>;
 
   constructor(
@@ -52,8 +63,6 @@ export class LegalContextService {
     config: ConfigService,
   ) {
     this.productCode = config.get<string>('sso.productCode') ?? 'legal';
-    this.sessionTtlSeconds =
-      config.get<number>('sso.sessionTtlSeconds') ?? 604800;
     this.accessRoleMap = parseRoleMap(
       config.get<string>('sso.legalAccessRoleMap'),
     );
@@ -127,26 +136,15 @@ export class LegalContextService {
       globalRoles,
       permissions,
     };
-    await this.redis.set(
-      contextKey(sessionId),
+    const saved = await this.redis.eval(
+      STORE_CONTEXT_SCRIPT,
+      1,
+      sessionKey(sessionId),
       JSON.stringify(stored),
-      'EX',
-      this.sessionTtlSeconds,
     );
-    await this.redis.sadd(
-      sessionIndexKey(
-        request.user.iss ?? request.accessContext?.identity.issuer ?? 'sso',
-        request.user.sub,
-      ),
-      sessionId,
-    );
-    await this.redis.expire(
-      sessionIndexKey(
-        request.user.iss ?? request.accessContext?.identity.issuer ?? 'sso',
-        request.user.sub,
-      ),
-      this.sessionTtlSeconds,
-    );
+    if (Number(saved) !== 1) {
+      throw new UnauthorizedException('Invalid session');
+    }
     return safeContext(stored);
   }
 
@@ -158,18 +156,24 @@ export class LegalContextService {
   }
 
   async invalidateUser(issuer: string, subject: string) {
-    const sessions = await this.redis.smembers(
-      sessionIndexKey(issuer, subject),
-    );
-    if (sessions.length) {
-      await this.redis.del(
-        ...sessions.flatMap((sessionId) => [
-          contextKey(sessionId),
-          `sso:session:${sessionId}`,
-        ]),
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        'sso:session:*',
+        'COUNT',
+        100,
       );
-    }
-    await this.redis.del(sessionIndexKey(issuer, subject));
+      cursor = nextCursor;
+      if (!keys.length) continue;
+
+      const sessions = await this.redis.mget(...keys);
+      const matchingKeys = keys.filter((_, index) =>
+        belongsToUser(sessions[index], issuer, subject),
+      );
+      if (matchingKeys.length) await this.redis.del(...matchingKeys);
+    } while (cursor !== '0');
   }
 
   async invalidateTenant(tenantId: string) {
@@ -182,7 +186,7 @@ export class LegalContextService {
   }
 
   async invalidateSession(sessionId: string) {
-    await this.redis.del(contextKey(sessionId), `sso:session:${sessionId}`);
+    await this.redis.del(sessionKey(sessionId));
   }
 
   private organizations(context?: AccessContext) {
@@ -222,8 +226,10 @@ export class LegalContextService {
   ): Promise<StoredContext | null> {
     const sessionId = request.ssoAuth?.cookie;
     if (!sessionId) return null;
-    const raw = await this.redis.get(contextKey(sessionId));
-    return raw ? (JSON.parse(raw) as StoredContext) : null;
+    const raw = await this.redis.get(sessionKey(sessionId));
+    return raw
+      ? ((JSON.parse(raw) as StoredSsoSession).legalContext ?? null)
+      : null;
   }
 
   private async validateStored(
@@ -239,7 +245,7 @@ export class LegalContextService {
       (organization.contextVersion ?? 0) !== stored.contextVersion
     ) {
       if (request.ssoAuth?.cookie) {
-        await this.redis.del(contextKey(request.ssoAuth.cookie));
+        await this.redis.del(sessionKey(request.ssoAuth.cookie));
       }
       throw new UnauthorizedException('Stale Legal context');
     }
@@ -353,4 +359,17 @@ function safeContext(context: StoredContext) {
     contextVersion: context.contextVersion,
     permissions: context.permissions,
   };
+}
+
+function belongsToUser(raw: string | null, issuer: string, subject: string) {
+  if (!raw) return false;
+  try {
+    const session = JSON.parse(raw) as StoredSsoSession;
+    return (
+      session.user?.sub === subject &&
+      (session.user.iss ?? session.accessContext?.identity?.issuer) === issuer
+    );
+  } catch {
+    return false;
+  }
 }

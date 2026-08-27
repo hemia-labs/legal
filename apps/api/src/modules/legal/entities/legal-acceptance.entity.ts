@@ -120,11 +120,11 @@ export class LegalAcceptance {
   acceptedAt: Date;
 
   @Column({
-    name: 'evidence_metadata',
+    name: 'metadata',
     type: 'jsonb',
     default: () => "'{}'::jsonb",
   })
-  evidenceMetadata: Record<string, unknown>;
+  metadata: Record<string, unknown>;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

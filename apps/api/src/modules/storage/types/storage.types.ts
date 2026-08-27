@@ -1,5 +1,5 @@
 export type SourceKind = 'pdf' | 'html' | 'markdown';
-export type PublicationArtifact = 'markdown' | 'html' | 'json' | 'pdf';
+export type PublicationArtifact = 'html';
 
 export type StorageConfig = {
   region: string;
@@ -27,12 +27,7 @@ export type StoredArtifact = StorageObjectRef & {
 };
 
 export type PublicationKeyContext = {
-  issuerId: string;
-  productId: string;
-  locale: string;
-  organizationId?: string | null;
-  tenantId?: string | null;
-  documentKey: string;
+  documentId: string;
   version: string;
 };
 
@@ -40,20 +35,7 @@ export function buildPublicationArtifactKey(
   context: PublicationKeyContext,
   artifact: PublicationArtifact,
 ) {
-  const extension = artifact === 'json' ? 'json' : artifact;
-  const filename = artifact === 'json' ? 'metadata.json' : `${artifact}.${extension}`;
-
-  return [
-    'documents',
-    safeSegment(context.issuerId),
-    safeSegment(context.productId),
-    safeSegment(context.locale),
-    safeSegment(context.organizationId ?? 'global'),
-    safeSegment(context.tenantId ?? 'global'),
-    safeSegment(context.documentKey),
-    safeSegment(context.version),
-    filename,
-  ].join('/');
+  return [...versionPrefix(context), `${artifact}.${artifact}`].join('/');
 }
 
 export function buildPublicationSourceKey(
@@ -62,36 +44,24 @@ export function buildPublicationSourceKey(
   sourceHash: string,
 ) {
   const extension = sourceKind === 'markdown' ? 'md' : sourceKind;
-  return [
-    'documents',
-    safeSegment(context.issuerId),
-    safeSegment(context.productId),
-    safeSegment(context.locale),
-    safeSegment(context.organizationId ?? 'global'),
-    safeSegment(context.tenantId ?? 'global'),
-    safeSegment(context.documentKey),
-    safeSegment(context.version),
-    'source',
-    `${sourceHash}.${extension}`,
-  ].join('/');
+  return [...versionPrefix(context), 'source', `${sourceHash}.${extension}`].join(
+    '/',
+  );
 }
 
-export function buildEvidenceKey(
-  issuerId: string,
-  applicationId: string,
-  acceptanceId: string,
-  organizationId?: string | null,
-  tenantId?: string | null,
-) {
+function versionPrefix(context: PublicationKeyContext) {
+  const documentId = safeSegment(context.documentId);
+  if (context.version === 'draft') {
+    return ['legal', 'documents', documentId, 'draft'];
+  }
+
   return [
-    'evidence',
-    safeSegment(issuerId),
-    safeSegment(applicationId),
-    safeSegment(organizationId ?? 'global'),
-    safeSegment(tenantId ?? 'global'),
-    safeSegment(acceptanceId),
-    'evidence.json',
-  ].join('/');
+    'legal',
+    'documents',
+    documentId,
+    'versions',
+    safeSegment(context.version),
+  ];
 }
 
 function safeSegment(value: string) {

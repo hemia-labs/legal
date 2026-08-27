@@ -15,6 +15,7 @@ const permissions = [
   'legal.documents.create',
   'legal.documents.edit',
   'legal.documents.archive',
+  'legal.documents.delete',
   'legal.versions.view',
   'legal.versions.create',
   'legal.versions.edit',

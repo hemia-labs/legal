@@ -4,7 +4,6 @@ import { LegalAcceptanceRule } from '../entities/legal-acceptance-rule.entity';
 import { LegalApplication } from '../entities/legal-application.entity';
 import { LegalDocument } from '../entities/legal-document.entity';
 import { LegalDocumentVersion } from '../entities/legal-document-version.entity';
-import { LegalEvidence } from '../entities/legal-evidence.entity';
 import { LegalIssuer } from '../entities/legal-issuer.entity';
 import { LegalNotification } from '../entities/legal-notification.entity';
 import { LegalPublication } from '../entities/legal-publication.entity';
@@ -55,6 +54,8 @@ export const LegalMapper = {
       applicationId: entity.applicationId,
       key: entity.key,
       documentType: entity.documentType,
+      documentVariant: entity.documentVariant,
+      parentDocumentId: entity.parentDocumentId,
       locale: entity.locale,
       title: entity.title,
       status: entity.status,
@@ -147,7 +148,7 @@ export const LegalMapper = {
       locale: entity.locale,
       contentHash: entity.contentHash,
       acceptedAt: entity.acceptedAt,
-      evidenceMetadata: entity.evidenceMetadata,
+      metadata: entity.metadata,
       createdAt: entity.createdAt,
     };
   },
@@ -230,21 +231,4 @@ export const LegalMapper = {
     };
   },
 
-  evidence(entity: LegalEvidence) {
-    return {
-      id: entity.id,
-      acceptanceId: entity.acceptanceId,
-      documentVersionId: entity.documentVersionId,
-      status: entity.status,
-      bucket: entity.s3Bucket,
-      key: entity.s3ObjectKey,
-      versionId: entity.s3VersionId,
-      contentType: entity.contentType,
-      size: entity.sizeBytes,
-      sha256: entity.sha256,
-      failureReason: entity.failureReason,
-      createdAt: entity.createdAt,
-      updatedAt: entity.updatedAt,
-    };
-  },
 };

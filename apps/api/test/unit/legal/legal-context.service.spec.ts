@@ -9,10 +9,9 @@ jest.mock('jose', () => ({
 describe('LegalContextService', () => {
   const redis = {
     get: jest.fn(),
-    set: jest.fn(),
-    sadd: jest.fn(),
-    expire: jest.fn(),
-    smembers: jest.fn().mockResolvedValue([]),
+    eval: jest.fn().mockResolvedValue(1),
+    scan: jest.fn().mockResolvedValue(['0', []]),
+    mget: jest.fn(),
     del: jest.fn(),
   };
   const tenants = { findOneBy: jest.fn() };
@@ -33,11 +32,15 @@ describe('LegalContextService', () => {
       externalTenantId: 'ext-1',
     });
     memberships.findOneBy.mockResolvedValue(null);
-    memberships.create.mockImplementation((value) => value);
-    memberships.save.mockImplementation(async (value) => ({
-      id: 'membership-1',
-      ...value,
-    }));
+    memberships.create.mockImplementation(
+      (value: Record<string, unknown>) => value,
+    );
+    memberships.save.mockImplementation((value: Record<string, unknown>) =>
+      Promise.resolve({
+        id: 'membership-1',
+        ...value,
+      }),
+    );
     roles.findOneBy.mockResolvedValue({
       id: 'role-viewer',
       code: 'legal.viewer',
@@ -56,11 +59,7 @@ describe('LegalContextService', () => {
       rolePermissions as any,
       {
         get: (key: string) =>
-          key === 'sso.productCode'
-            ? 'legal'
-            : key === 'sso.sessionTtlSeconds'
-              ? 604800
-              : 'legal-api',
+          key === 'sso.productCode' ? 'legal' : 'legal-api',
       } as any,
     );
   }
@@ -118,15 +117,11 @@ describe('LegalContextService', () => {
       permissions: ['legal.documents.view'],
     });
     expect(result).not.toHaveProperty('contextToken');
-    expect(redis.set).toHaveBeenCalledWith(
-      'legal:session-context:session-1',
+    expect(redis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('session.legalContext'),
+      1,
+      'sso:session:session-1',
       expect.any(String),
-      'EX',
-      604800,
-    );
-    expect(redis.expire).toHaveBeenCalledWith(
-      'legal:user-sessions:https://identity.hemia.test:user-1',
-      604800,
     );
   });
 
@@ -177,12 +172,31 @@ describe('LegalContextService', () => {
       productTenantId: 'tenant-1',
       permissions: ['legal.documents.view'],
     });
-    expect(redis.set).toHaveBeenCalledWith(
-      'legal:session-context:session-1',
+    expect(redis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('session.legalContext'),
+      1,
+      'sso:session:session-1',
       expect.any(String),
-      'EX',
-      604800,
     );
+  });
+
+  it('invalidates matching SSO sessions without a secondary Redis index', async () => {
+    redis.scan.mockResolvedValue([
+      '0',
+      ['sso:session:session-1', 'sso:session:session-2'],
+    ]);
+    redis.mget.mockResolvedValue([
+      JSON.stringify({
+        user: { iss: 'https://identity.hemia.test', sub: 'user-1' },
+      }),
+      JSON.stringify({
+        user: { iss: 'https://identity.hemia.test', sub: 'user-2' },
+      }),
+    ]);
+
+    await service().invalidateUser('https://identity.hemia.test', 'user-1');
+
+    expect(redis.del).toHaveBeenCalledWith('sso:session:session-1');
   });
 
   it('rejects an organization that is absent from the Access context', async () => {

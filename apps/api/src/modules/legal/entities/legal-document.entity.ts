@@ -1,6 +1,7 @@
 import {
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   Entity,
   Index,
   JoinColumn,
@@ -15,7 +16,7 @@ import { LegalIssuer } from './legal-issuer.entity';
 @Index(
   'IDX_legal_documents_context_key_locale_unique',
   ['issuerId', 'applicationId', 'key', 'locale'],
-  { unique: true },
+  { unique: true, where: '"deleted_at" IS NULL' },
 )
 export class LegalDocument {
   @PrimaryGeneratedColumn('uuid')
@@ -38,8 +39,18 @@ export class LegalDocument {
   @Column({ length: 80 })
   key: string;
 
-  @Column({ name: 'document_type', length: 40, default: 'terms' })
+  @Column({ name: 'document_type', length: 40, default: 'terms_and_conditions' })
   documentType: string;
+
+  @Column({ name: 'document_variant', length: 20, default: 'standard' })
+  documentVariant: 'standard' | 'integral' | 'simplified' | 'short';
+
+  @Column({ name: 'parent_document_id', type: 'uuid', nullable: true })
+  parentDocumentId: string | null;
+
+  @ManyToOne(() => LegalDocument, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'parent_document_id' })
+  parentDocument: LegalDocument | null;
 
   @Column({ length: 12 })
   locale: string;
@@ -55,4 +66,7 @@ export class LegalDocument {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deletedAt: Date | null;
 }

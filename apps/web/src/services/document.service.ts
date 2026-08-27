@@ -3,6 +3,9 @@ import { legalApi } from "@/lib/legal-api";
 export type LegalDocumentStatus = "active" | "archived";
 export type LegalVersionStatus = "draft" | "published" | "superseded" | "archived";
 export type SourceKind = "pdf" | "html" | "markdown";
+export type LegalDocumentWorkflow = "public" | "internal";
+export type LegalDocumentVariant = "standard" | "integral" | "simplified" | "short";
+export type AcceptancePolicy = "required" | "optional" | "configurable";
 
 export type LegalDocument = {
   id: string;
@@ -10,6 +13,8 @@ export type LegalDocument = {
   applicationId: string;
   key: string;
   documentType: string;
+  documentVariant: LegalDocumentVariant;
+  parentDocumentId: string | null;
   locale: string;
   title: string;
   status: LegalDocumentStatus;
@@ -66,7 +71,7 @@ export type PublishDraftPayload = {
   effectiveUntil?: string;
   acceptanceDeadline?: string;
   gracePeriodDays?: number;
-  rules: AcceptanceRuleInput[];
+  rules?: AcceptanceRuleInput[];
 };
 
 export type PublicationPreview = {
@@ -87,7 +92,15 @@ export type PublicationResult = {
   outboxEventId: string;
 };
 
-export type DocumentTypeOption = { code: string; name: string };
+export type DocumentTypeOption = {
+  code: string;
+  name: string;
+  workflow: LegalDocumentWorkflow;
+  allowedSourceKinds: SourceKind[];
+  requiresHtml: boolean;
+  acceptance: AcceptancePolicy;
+  variants: LegalDocumentVariant[];
+};
 
 export type PublicArtifact = {
   url: string;
@@ -99,6 +112,11 @@ export type PublicArtifact = {
 
 export type PublicDocument = {
   document: Pick<LegalDocument, "applicationId" | "key" | "documentType" | "locale" | "title">;
+  privacyNotice: {
+    variant: LegalDocumentVariant;
+    integralDocumentKey: string | null;
+    integralVersion: string;
+  } | null;
   version: {
     id: string;
     documentId: string;
@@ -128,6 +146,14 @@ export type PublicDocument = {
 
 export function listDocuments() {
   return legalApi<LegalDocument[]>("/v1/legal/documents");
+}
+
+export function archiveDocument(documentId: string) {
+  return legalApi(`/v1/legal/documents/${documentId}/archive`, { method: "POST" });
+}
+
+export function deleteDocument(documentId: string) {
+  return legalApi(`/v1/legal/documents/${documentId}`, { method: "DELETE" });
 }
 
 export async function getDocument(documentId: string) {
@@ -176,4 +202,11 @@ export function listVersions(documentId: string) {
 
 export function listDocumentTypes() {
   return legalApi<DocumentTypeOption[]>("/v1/legal/document-types");
+}
+
+export function sourceKindFor(file: File): SourceKind | null {
+  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) return "pdf";
+  if (file.type === "text/html" || /\.(html?|xhtml)$/i.test(file.name)) return "html";
+  if (file.type === "text/markdown" || /\.(md|markdown)$/i.test(file.name)) return "markdown";
+  return null;
 }

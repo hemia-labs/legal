@@ -1,9 +1,7 @@
 import { createHash } from 'crypto';
 import { AuditEvent } from '../../../src/modules/legal/entities/audit-event.entity';
-import { LegalAcceptance } from '../../../src/modules/legal/entities/legal-acceptance.entity';
 import { LegalAcceptanceRule } from '../../../src/modules/legal/entities/legal-acceptance-rule.entity';
 import { LegalDocumentVersion } from '../../../src/modules/legal/entities/legal-document-version.entity';
-import { LegalEvidence } from '../../../src/modules/legal/entities/legal-evidence.entity';
 import { LegalNotification } from '../../../src/modules/legal/entities/legal-notification.entity';
 import { LegalPublication } from '../../../src/modules/legal/entities/legal-publication.entity';
 import { LegalPublicationAsset } from '../../../src/modules/legal/entities/legal-publication-asset.entity';
@@ -18,8 +16,6 @@ describe('LegalOutboxWorker publication uploads', () => {
     const notifications = new Repo<LegalNotification>();
     const publications = new Repo<LegalPublication>();
     const assets = new Repo<LegalPublicationAsset>();
-    const evidences = new Repo<LegalEvidence>();
-    const acceptances = new Repo<LegalAcceptance>();
     const versions = new Repo<LegalDocumentVersion>();
     const audits = new Repo<AuditEvent>();
     const sourceBody = Buffer.from('<h1>Terms</h1><script>alert(1)</script>');
@@ -59,7 +55,7 @@ describe('LegalOutboxWorker publication uploads', () => {
       documentVersionId: 'version-html',
       issuerId: 'issuer-html',
       applicationId: 'application-html',
-      documentType: 'terms',
+      documentType: 'terms_and_conditions',
       productId: 'application-html',
       organizationId: null,
       productTenantId: null,
@@ -71,12 +67,9 @@ describe('LegalOutboxWorker publication uploads', () => {
       acceptanceDeadline: null,
       gracePeriodDays: 0,
       rulesSnapshot: [{ acceptanceMode: 'individual' }],
-      contentMarkdown: null,
-      contentHtml: null,
       contentHash: analysis.contentHash,
       sourceKind: 'html',
       sourceHash: analysis.sourceHash,
-      manifestHash: null,
       requestedByIdentityIssuer: 'dev',
       requestedBySubjectId: 'user',
       publishedByIdentityIssuer: null,
@@ -91,8 +84,6 @@ describe('LegalOutboxWorker publication uploads', () => {
       notifications,
       publications,
       assets,
-      evidences,
-      acceptances,
       dataSource([
         [LegalPublication, publications],
         [LegalPublicationAsset, assets],
@@ -124,8 +115,10 @@ describe('LegalOutboxWorker publication uploads', () => {
     await (worker as any).processEvent(event);
 
     expect(publications.rows[0].status).toBe('published');
-    expect(assets.rows.map((asset) => asset.kind).sort()).toEqual(['html', 'json', 'source']);
-    expect(versions.rows[0].sourceS3ObjectKey).toContain('/source/');
+    expect(assets.rows.map((asset) => asset.kind).sort()).toEqual(['html', 'source']);
+    expect(versions.rows[0].sourceS3ObjectKey).toBe(
+      `legal/documents/document-html/versions/1.0.0/source/${analysis.sourceHash}.html`,
+    );
   });
 
   it('marks a failed upload and completes an idempotent retry', async () => {
@@ -134,8 +127,6 @@ describe('LegalOutboxWorker publication uploads', () => {
     const notifications = new Repo<LegalNotification>();
     const publications = new Repo<LegalPublication>();
     const assets = new Repo<LegalPublicationAsset>();
-    const evidences = new Repo<LegalEvidence>();
-    const acceptances = new Repo<LegalAcceptance>();
     const versions = new Repo<LegalDocumentVersion>();
     const audits = new Repo<AuditEvent>();
     const sourceBody = Buffer.from('<h1>v2</h1>');
@@ -178,8 +169,6 @@ describe('LegalOutboxWorker publication uploads', () => {
       documentId: 'document-1',
       version: '2.0.0',
       status: 'draft',
-      contentMarkdown: null,
-      contentHtml: null,
       contentHash: sourceAnalysis.contentHash,
       sourceKind: 'html',
       sourceContentType: 'text/html',
@@ -195,7 +184,7 @@ describe('LegalOutboxWorker publication uploads', () => {
       documentVersionId: 'version-new',
       issuerId: 'issuer-1',
       applicationId: 'application-1',
-      documentType: 'terms',
+      documentType: 'terms_and_conditions',
       productId: 'product-1',
       organizationId: null,
       productTenantId: null,
@@ -207,12 +196,9 @@ describe('LegalOutboxWorker publication uploads', () => {
       acceptanceDeadline: null,
       gracePeriodDays: 0,
       rulesSnapshot: [{ acceptanceMode: 'individual' }],
-      contentMarkdown: null,
-      contentHtml: null,
       contentHash: sourceAnalysis.contentHash,
       sourceKind: 'html',
       sourceHash: sourceAnalysis.sourceHash,
-      manifestHash: null,
       requestedByIdentityIssuer: 'dev',
       requestedBySubjectId: 'user',
       publishedByIdentityIssuer: null,
@@ -227,8 +213,6 @@ describe('LegalOutboxWorker publication uploads', () => {
       notifications,
       publications,
       assets,
-      evidences,
-      acceptances,
       dataSource([
         [LegalPublication, publications],
         [LegalPublicationAsset, assets],
@@ -250,7 +234,7 @@ describe('LegalOutboxWorker publication uploads', () => {
         sourceHash: sourceAnalysis.sourceHash,
         sourceFileName: 'terms.html',
         sourceRef: ref(
-          'documents/issuer-1/application-1/es-mx/global/global/terms/draft/source.html',
+          `legal/documents/document-1/draft/source/${sourceAnalysis.sourceHash}.html`,
           sourceBody,
           'text/html',
         ),
@@ -278,85 +262,14 @@ describe('LegalOutboxWorker publication uploads', () => {
     expect(versions.rows.find((row) => row.id === 'version-new')?.status).toBe(
       'published',
     );
-    expect(assets.rows).toHaveLength(3);
+    expect(assets.rows).toHaveLength(2);
     expect(assets.rows.some((asset) => asset.kind === 'pdf')).toBe(false);
     expect(assets.rows.every((asset) => asset.s3VersionId)).toBe(true);
 
     await (worker as any).processEvent(event);
-    expect(assets.rows).toHaveLength(3);
+    expect(assets.rows).toHaveLength(2);
   });
 
-  it('generates acceptance evidence with the stored hash and context', async () => {
-    const outbox = new Repo<OutboxEvent>();
-    const evidences = new Repo<LegalEvidence>();
-    const acceptances = new Repo<LegalAcceptance>();
-    let uploaded: Buffer | undefined;
-    const storage = {
-      putImmutable: async (key: string, body: Buffer, contentType: string) => {
-        uploaded = body;
-        return ref(key, body, contentType);
-      },
-    };
-    await evidences.save({
-      id: 'evidence-1',
-      acceptanceId: 'acceptance-1',
-      documentVersionId: 'version-1',
-      status: 'pending',
-    } as LegalEvidence);
-    await acceptances.save({
-      id: 'acceptance-1',
-      issuerId: 'issuer-1',
-      applicationId: 'application-1',
-      organizationId: 'org-1',
-      productTenantId: 'tenant-1',
-      identityIssuer: 'hemia',
-      subjectId: 'user-1',
-      documentVersionId: 'version-1',
-      contentHash: 'b'.repeat(64),
-      acceptedAt: new Date('2026-08-02T12:00:00Z'),
-      ipAddress: '127.0.0.1',
-      userAgent: 'jest',
-      authenticationMethod: 'authenticated_session',
-    } as LegalAcceptance);
-
-    const worker = new LegalOutboxWorker(
-      outbox,
-      new Repo<LegalAcceptanceRule>(),
-      new Repo<LegalNotification>(),
-      new Repo<LegalPublication>(),
-      new Repo<LegalPublicationAsset>(),
-      evidences,
-      acceptances,
-      {} as never,
-      storage,
-    );
-    const event = {
-      id: 'evidence-event-1',
-      traceId: 'trace-1',
-      eventType: 'legal.evidence.requested',
-      payload: { evidenceId: 'evidence-1', acceptanceId: 'acceptance-1' },
-      status: 'pending',
-      attemptCount: 0,
-      nextRunAt: null,
-      processedAt: null,
-    } as OutboxEvent;
-
-    await (worker as any).processEvent(event);
-
-    const evidence = evidences.rows[0];
-    expect(evidence.status).toBe('ready');
-    expect(evidence.s3ObjectKey).toContain('org-1/tenant-1/acceptance-1');
-    expect(evidence.sha256).toBe(
-      createHash('sha256').update(uploaded!).digest('hex'),
-    );
-    expect(JSON.parse(uploaded!.toString())).toMatchObject({
-      acceptanceId: 'acceptance-1',
-      documentHash: 'b'.repeat(64),
-      organizationId: 'org-1',
-      productTenantId: 'tenant-1',
-      authenticationMethod: 'authenticated_session',
-    });
-  });
 });
 
 function ref(key: string, body: Buffer, contentType: string) {

@@ -19,27 +19,7 @@ export class RedisSessionStore implements SessionStore, OnModuleDestroy {
   }
 
   async delete(key: string): Promise<void> {
-    const sessionId = key.startsWith('sso:session:')
-      ? key.slice('sso:session:'.length)
-      : null;
-
-    const raw = sessionId ? await this.redis.get(key) : null;
-    const session = raw
-      ? (JSON.parse(raw) as { user?: { iss?: string; sub?: string } })
-      : null;
-    const user = session?.user;
-    const userSessionIndex =
-      user?.iss && user.sub
-        ? `legal:user-sessions:${user.iss}:${user.sub}`
-        : null;
-
-    await this.redis.del(
-      key,
-      ...(sessionId ? [`legal:session-context:${sessionId}`] : []),
-    );
-    if (sessionId && userSessionIndex) {
-      await this.redis.srem(userSessionIndex, sessionId);
-    }
+    await this.redis.del(key);
   }
 
   async withLock<T>(
@@ -50,7 +30,9 @@ export class RedisSessionStore implements SessionStore, OnModuleDestroy {
     const token = randomUUID();
     const deadline = Date.now() + Math.max(ttlSeconds * 1000 + 5_000, 10_000);
 
-    while ((await this.redis.set(key, token, 'EX', ttlSeconds, 'NX')) !== 'OK') {
+    while (
+      (await this.redis.set(key, token, 'EX', ttlSeconds, 'NX')) !== 'OK'
+    ) {
       if (Date.now() >= deadline) throw new Error(`Redis lock timeout: ${key}`);
       await new Promise((resolve) => setTimeout(resolve, 50));
     }

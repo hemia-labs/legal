@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Archive,
@@ -17,19 +17,12 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  X,
+  Trash2,
 } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Card,
   CardContent,
@@ -62,33 +55,26 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { legalApi } from "@/lib/legal-api";
 import {
   DocumentTypeOption,
   LegalDocument,
+  archiveDocument as archiveDocumentRequest,
+  deleteDocument as deleteDocumentRequest,
   listDocumentTypes,
   listDocuments,
 } from "@/services/document.service";
-import { listApplications, type Application } from "@/services/application.service";
-import { listIssuerOptions, type IssuerOption } from "@/services/issuer.service";
 
 export default function DocumentsPage() {
   const router = useRouter();
   const session = useLegalSession();
   const [documents, setDocuments] = useState<LegalDocument[]>([]);
   const [documentTypes, setDocumentTypes] = useState<DocumentTypeOption[]>([]);
-  const [issuerOptions, setIssuerOptions] = useState<IssuerOption[]>([]);
-  const [applicationOptions, setApplicationOptions] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [createError, setCreateError] = useState("");
-  const [createLoading, setCreateLoading] = useState(false);
-  const [createSaving, setCreateSaving] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
-  const [selectedIssuerId, setSelectedIssuerId] = useState("");
-  const [selectedApplicationId, setSelectedApplicationId] = useState("");
   const [archivingId, setArchivingId] = useState("");
   const [archiveTarget, setArchiveTarget] = useState<LegalDocument | null>(null);
+  const [deletingId, setDeletingId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<LegalDocument | null>(null);
   const [query, setQuery] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
   const [typeSearch, setTypeSearch] = useState("");
@@ -101,6 +87,7 @@ export default function DocumentsPage() {
   const canView = hasPermission(permissions, "legal.documents.view");
   const canCreate = hasPermission(permissions, "legal.documents.create");
   const canArchive = hasPermission(permissions, "legal.documents.archive");
+  const canDelete = hasPermission(permissions, "legal.documents.delete");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -142,7 +129,6 @@ export default function DocumentsPage() {
 
   const locales = Array.from(new Set(documents.map((document) => document.locale))).sort();
   const typeNames = new Map(documentTypes.map((type) => [type.code, type.name]));
-  typeNames.set("terms", "Términos y condiciones");
   const normalizedFilterSearch = filterSearch.trim().toLocaleLowerCase("es-MX");
   const normalizedTypeSearch = typeSearch.trim().toLocaleLowerCase("es-MX");
   const visibleTypes = documentTypes.filter(({ code, name }) =>
@@ -163,85 +149,13 @@ export default function DocumentsPage() {
     setStatus("all");
   }
 
-  async function openCreate() {
-    setShowCreate(true);
-    setCreateError("");
-    if (issuerOptions.length) return;
-
-    setCreateLoading(true);
-    try {
-      const options = await listIssuerOptions();
-      setIssuerOptions(options.filter(({ status }) => status === "active"));
-    } catch (cause) {
-      setCreateError(cause instanceof Error ? cause.message : "No se pudieron cargar los emisores.");
-    } finally {
-      setCreateLoading(false);
-    }
-  }
-
-  async function selectIssuer(issuerId: string) {
-    setSelectedIssuerId(issuerId);
-    setSelectedApplicationId("");
-    setApplicationOptions([]);
-    setCreateError("");
-    if (!issuerId) return;
-
-    setCreateLoading(true);
-    try {
-      const response = await listApplications({ issuerId, status: "active" });
-      setApplicationOptions(response.items);
-    } catch (cause) {
-      setCreateError(cause instanceof Error ? cause.message : "No se pudieron cargar las aplicaciones.");
-    } finally {
-      setCreateLoading(false);
-    }
-  }
-
-  function closeCreate() {
-    setShowCreate(false);
-    setCreateError("");
-    setSelectedIssuerId("");
-    setSelectedApplicationId("");
-    setApplicationOptions([]);
-  }
-
-  async function createDocument(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    if (!selectedIssuerId || !selectedApplicationId) return;
-
-    setCreateSaving(true);
-    setError("");
-    try {
-      const created = await legalApi<LegalDocument>("/v1/legal/documents", {
-        method: "POST",
-        body: JSON.stringify({
-          issuerId: selectedIssuerId,
-          applicationId: selectedApplicationId,
-          key: String(data.get("key")),
-          locale: String(data.get("locale")),
-          title: String(data.get("title")),
-          documentType: String(data.get("documentType")),
-        }),
-      });
-      setDocuments((current) => [created, ...current]);
-      form.reset();
-      closeCreate();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo crear el documento.");
-    } finally {
-      setCreateSaving(false);
-    }
-  }
-
   async function archiveDocument() {
     if (!archiveTarget) return;
     const document = archiveTarget;
     setArchivingId(document.id);
     setError("");
     try {
-      await legalApi(`/v1/legal/documents/${document.id}`, { method: "DELETE" });
+      await archiveDocumentRequest(document.id);
       setDocuments((current) =>
         current.map((item) => (item.id === document.id ? { ...item, status: "archived" } : item)),
       );
@@ -250,6 +164,22 @@ export default function DocumentsPage() {
       setError(cause instanceof Error ? cause.message : "No se pudo archivar el documento.");
     } finally {
       setArchivingId("");
+    }
+  }
+
+  async function deleteDocument() {
+    if (!deleteTarget) return;
+    const document = deleteTarget;
+    setDeletingId(document.id);
+    setError("");
+    try {
+      await deleteDocumentRequest(document.id);
+      setDocuments((current) => current.filter((item) => item.id !== document.id));
+      setDeleteTarget(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo eliminar el documento.");
+    } finally {
+      setDeletingId("");
     }
   }
 
@@ -275,14 +205,13 @@ export default function DocumentsPage() {
             Administra documentos legales por idioma y tipo.
           </p>
         </div>
-        {canCreate && (
+        {canCreate && documents.length > 0 && (
           <Button
             className="px-4"
-            onClick={() => (showCreate ? closeCreate() : void openCreate())}
-            disabled={createLoading}
+            onClick={() => router.push("/documents/new")}
           >
-            {showCreate ? <X className="size-4" /> : <Plus className="size-4" aria-hidden="true" />}
-            {showCreate ? "Cancelar" : "Nuevo documento"}
+            <Plus className="size-4" aria-hidden="true" />
+            Nuevo documento
           </Button>
         )}
       </header>
@@ -294,89 +223,6 @@ export default function DocumentsPage() {
             <RefreshCw className="size-4" />
           </Button>
         </div>
-      )}
-
-      {showCreate && (
-        <form
-          onSubmit={createDocument}
-          className="rounded-lg border border-border bg-card p-6 shadow-sm"
-        >
-          <div className="mb-5">
-            <h2 className="text-base font-semibold">Nuevo documento</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Selecciona el issuer y la aplicación durante la creación.
-            </p>
-          </div>
-          {createError && (
-            <p className="mb-4 rounded-lg border border-error bg-error-subtle px-4 py-3 text-sm text-error" role="alert">
-              {createError}
-            </p>
-          )}
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <Field label="Issuer">
-              <Select value={selectedIssuerId} onValueChange={(value) => void selectIssuer(value ?? "")} required>
-                <SelectTrigger>
-                  <SelectValue placeholder={createLoading ? "Cargando issuers…" : "Selecciona un issuer"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {issuerOptions.map((issuer) => (
-                    <SelectItem key={issuer.id} value={issuer.id}>
-                      {issuer.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Aplicación">
-              <Select
-                value={selectedApplicationId}
-                onValueChange={(value) => setSelectedApplicationId(value ?? "")}
-                disabled={!selectedIssuerId || createLoading}
-                required
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecciona una aplicación" />
-                </SelectTrigger>
-                <SelectContent>
-                  {applicationOptions.map((application) => (
-                    <SelectItem key={application.id} value={application.id}>
-                      {application.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Tipo de documento">
-              <Select name="documentType" required defaultValue="terms_and_conditions">
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {documentTypes.map(({ code, name }) => (
-                    <SelectItem key={code} value={code}>
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Idioma">
-              <Input name="locale" required minLength={2} maxLength={12} defaultValue="es-MX" />
-            </Field>
-            <Field label="Clave">
-              <Input name="key" required minLength={2} maxLength={80} placeholder="terms_of_service" />
-            </Field>
-            <Field label="Título" className="md:col-span-2">
-              <Input name="title" required minLength={2} maxLength={200} placeholder="Términos y condiciones" />
-            </Field>
-          </div>
-          <div className="mt-5 flex justify-end">
-            <Button disabled={createSaving || createLoading || !selectedApplicationId}>
-              {createSaving && <LoaderCircle className="size-4 animate-spin" />}
-              {createSaving ? "Creando…" : "Crear documento"}
-            </Button>
-          </div>
-        </form>
       )}
 
       <section className="space-y-4">
@@ -517,9 +363,12 @@ export default function DocumentsPage() {
                 document={document}
                 typeName={typeNames.get(document.documentType) ?? document.documentType}
                 canArchive={canArchive}
+                canDelete={canDelete}
                 archiving={archivingId === document.id}
+                deleting={deletingId === document.id}
                 onOpen={() => router.push(`/documents/${document.id}`)}
                 onArchive={() => setArchiveTarget(document)}
+                onDelete={() => setDeleteTarget(document)}
               />
             ))}
           </div>
@@ -537,7 +386,7 @@ export default function DocumentsPage() {
             }
             action={
               canCreate ? (
-                <Button onClick={() => void openCreate()} disabled={createLoading}>
+                <Button onClick={() => router.push("/documents/new")}>
                   <Plus className="size-4" aria-hidden="true" />
                   Nuevo documento
                 </Button>
@@ -579,24 +428,35 @@ export default function DocumentsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  );
-}
 
-function Field({
-  label,
-  className,
-  children,
-}: {
-  label: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className={className}>
-      <span className="mb-1.5 block text-sm font-medium">{label}</span>
-      {children}
-    </label>
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && !deletingId && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia className="text-destructive">
+              <Trash2 className="size-5" />
+            </AlertDialogMedia>
+            <AlertDialogTitle>Eliminar documento</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{deleteTarget?.title}” se eliminará lógicamente, dejará de aparecer en los listados y conservará su historial.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(deletingId)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={Boolean(deletingId)}
+              onClick={() => void deleteDocument()}
+            >
+              {deletingId && <LoaderCircle className="size-4 animate-spin" />}
+              {deletingId ? "Eliminando…" : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }
 
@@ -604,16 +464,22 @@ function DocumentCard({
   document,
   typeName,
   canArchive,
+  canDelete,
   archiving,
+  deleting,
   onOpen,
   onArchive,
+  onDelete,
 }: {
   document: LegalDocument;
   typeName: string;
   canArchive: boolean;
+  canDelete: boolean;
   archiving: boolean;
+  deleting: boolean;
   onOpen: () => void;
   onArchive: () => void;
+  onDelete: () => void;
 }) {
   return (
     <Card className="gap-0 transition-shadow hover:shadow-md">
@@ -653,22 +519,33 @@ function DocumentCard({
       </CardContent>
       <CardFooter className="justify-between gap-3 px-4 py-3 text-xs text-muted-foreground">
         <span>Actualizado {formatDate(document.updatedAt)}</span>
-        {canArchive && document.status === "active" ? (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Archivar ${document.title}`}
-            title="Archivar"
-            disabled={archiving}
-            onClick={onArchive}
-          >
-            {archiving ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : (
-              <Archive className="size-4" />
-            )}
-          </Button>
-        ) : null}
+        <div className="flex items-center gap-1">
+          {canArchive && document.status === "active" ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Archivar ${document.title}`}
+              title="Archivar"
+              disabled={archiving || deleting}
+              onClick={onArchive}
+            >
+              {archiving ? <LoaderCircle className="size-4 animate-spin" /> : <Archive className="size-4" />}
+            </Button>
+          ) : null}
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-destructive hover:text-destructive"
+              aria-label={`Eliminar ${document.title}`}
+              title="Eliminar"
+              disabled={archiving || deleting}
+              onClick={onDelete}
+            >
+              {deleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            </Button>
+          ) : null}
+        </div>
       </CardFooter>
     </Card>
   );

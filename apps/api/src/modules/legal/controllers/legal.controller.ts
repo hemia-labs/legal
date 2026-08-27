@@ -207,11 +207,18 @@ export class LegalController {
     return this.service.updateDocument(id, dto, request.actor);
   }
 
-  @Delete('documents/:id')
+  @Post('documents/:id/archive')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Permissions('legal.documents.archive')
   archiveDocument(@Param('id') id: string, @Req() request: LegalRequest) {
     return this.service.archiveDocument(id, request.actor);
+  }
+
+  @Delete('documents/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Permissions('legal.documents.delete')
+  deleteDocument(@Param('id') id: string, @Req() request: LegalRequest) {
+    return this.service.deleteDocument(id, request.actor);
   }
 
   @Get('documents/:documentId/draft')
@@ -383,12 +390,6 @@ export class LegalController {
     return this.service.getAcceptance(id, request.actor);
   }
 
-  @Get('acceptances/:id/evidence')
-  @Permissions('legal.acceptances.view')
-  getEvidence(@Param('id') id: string, @Req() request: LegalRequest) {
-    return this.service.getEvidence(id, request.actor);
-  }
-
   @Get('notifications')
   @Permissions('legal.notifications.view')
   listNotifications(@Query() filter: NotificationFilterDto) {
@@ -425,7 +426,7 @@ function scopePublication(dto: PublishDraftDto, request: LegalRequest): PublishD
   if (!context) throw new ForbiddenException('Legal organization context required');
   return {
     ...dto,
-    rules: dto.rules.map((rule) => ({
+    rules: (dto.rules ?? []).map((rule) => ({
       ...rule,
       organizationId: context.organizationId,
       productTenantId: context.productTenantId,

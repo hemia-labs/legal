@@ -296,8 +296,9 @@ describe('Legal catalog (e2e)', () => {
       .expect(200)
       .expect(({ body }: { body: { code: string }[] }) => {
         expect(body.map(({ code }) => code)).toEqual(
-          expect.arrayContaining(['custom_policy', 'terms']),
+          expect.arrayContaining(['custom_policy', 'terms_and_conditions']),
         );
+        expect(body.map(({ code }) => code)).not.toContain('terms');
       });
 
     const issuer = await createIssuer(app, 'issuer_hemia');
@@ -335,7 +336,7 @@ describe('Legal catalog (e2e)', () => {
       .expect(409);
   });
 
-  it('lists, updates and archives documents with an idempotent archive', async () => {
+  it('lists, updates, archives and deletes documents', async () => {
     const document = await createDocument(app, 'terms');
 
     await request(app.getHttpServer())
@@ -364,7 +365,7 @@ describe('Legal catalog (e2e)', () => {
       });
 
     await request(app.getHttpServer())
-      .delete(`/v1/legal/documents/${document.id}`)
+      .post(`/v1/legal/documents/${document.id}/archive`)
       .set(headers)
       .expect(204);
 
@@ -391,9 +392,26 @@ describe('Legal catalog (e2e)', () => {
       .expect(409);
 
     await request(app.getHttpServer())
-      .delete(`/v1/legal/documents/${document.id}`)
+      .post(`/v1/legal/documents/${document.id}/archive`)
       .set(headers)
       .expect(409);
+
+    await request(app.getHttpServer())
+      .delete(`/v1/legal/documents/${document.id}`)
+      .set(headers)
+      .expect(204);
+
+    await request(app.getHttpServer())
+      .get('/v1/legal/documents')
+      .query({
+        issuerId: document.issuerId,
+        applicationId: document.applicationId,
+      })
+      .set(headers)
+      .expect(200)
+      .expect(({ body }: { body: Array<{ id: string }> }) => {
+        expect(body.some((item) => item.id === document.id)).toBe(false);
+      });
   });
 
   it('enforces document permissions independently', async () => {
@@ -443,13 +461,23 @@ describe('Legal catalog (e2e)', () => {
       .expect(200);
 
     await request(app.getHttpServer())
-      .delete(`/v1/legal/documents/${document.id}`)
+      .post(`/v1/legal/documents/${document.id}/archive`)
       .set({ ...headers, 'x-permissions': 'legal.documents.edit' })
       .expect(403);
 
     await request(app.getHttpServer())
+      .post(`/v1/legal/documents/${document.id}/archive`)
+      .set({ ...headers, 'x-permissions': 'legal.documents.archive' })
+      .expect(204);
+
+    await request(app.getHttpServer())
       .delete(`/v1/legal/documents/${document.id}`)
       .set({ ...headers, 'x-permissions': 'legal.documents.archive' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .delete(`/v1/legal/documents/${document.id}`)
+      .set({ ...headers, 'x-permissions': 'legal.documents.delete' })
       .expect(204);
   });
 
@@ -519,8 +547,8 @@ describe('Legal catalog (e2e)', () => {
       });
   });
 
-  it('publishes an optional PDF artifact for applications', async () => {
-    const document = await createDocument(app, 'pdfterms');
+  it('publishes an internal PDF without exposing it publicly', async () => {
+    const document = await createDocument(app, 'pdfcontract', 'saas_agreement');
     await request(app.getHttpServer())
       .post(`/v1/legal/documents/${document.id}/draft`)
       .set(headers)
@@ -533,22 +561,24 @@ describe('Legal catalog (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/v1/legal/documents/${document.id}/draft/publish`)
       .set(headers)
-      .send(publishPayload('1.0.0'))
+      .send(publishPayload('1.0.0', []))
       .expect(201);
     await worker.processPending();
 
     await request(app.getHttpServer())
+      .get(`/v1/legal/documents/${document.id}/versions`)
+      .set(headers)
+      .expect(200)
+      .expect(({ body }: { body: { version: string; status: string }[] }) => {
+        expect(body).toEqual(expect.arrayContaining([
+          expect.objectContaining({ version: '1.0.0', status: 'published' }),
+        ]));
+      });
+
+    await request(app.getHttpServer())
       .get(`/v1/legal/public/${document.applicationId}/documents/${document.key}`)
       .query({ locale: 'es-MX' })
-      .expect(200)
-      .expect(
-        ({ body }: { body: { artifacts: { pdf?: { contentType: string; sha256: string } } } }) => {
-          expect(body.artifacts.pdf).toMatchObject({
-            contentType: 'application/pdf',
-          });
-          expect(body.artifacts.pdf?.sha256).toMatch(/^[a-f0-9]{64}$/);
-        },
-      );
+      .expect(404);
   });
 
   it('previews and publishes a draft with rule, audit and outbox', async () => {
@@ -692,7 +722,7 @@ describe('Legal catalog (e2e)', () => {
       });
   });
 
-  it('requires Access role for representative acceptance and keeps evidence', async () => {
+  it('requires Access role for representative acceptance and records it in LegalAcceptance', async () => {
     const document = await createDocument(app, 'contract');
     const published = await publishVersion(app, document.id, '1.0.0', '# v1', [
       {
@@ -727,7 +757,7 @@ describe('Legal catalog (e2e)', () => {
     expect(acceptance.roleAtAcceptance).toBe('organization_owner');
 
     await request(app.getHttpServer())
-      .get(`/v1/legal/acceptances/${acceptance.id}/evidence`)
+      .get(`/v1/legal/acceptances/${acceptance.id}`)
       .set(headers)
       .expect(200)
       .expect(({ body }: { body: { acceptance: { contentHash: string } } }) => {
@@ -889,7 +919,7 @@ describe('Legal catalog (e2e)', () => {
       );
 
     const [auditCount] = (await dataSource.query(
-      `SELECT count(*)::int AS count FROM audit_events WHERE action = 'legal.evidence.export'`,
+      `SELECT count(*)::int AS count FROM audit_events WHERE action = 'legal.acceptance.export'`,
     )) as [{ count: number }];
     expect(auditCount.count).toBe(1);
 
@@ -961,7 +991,11 @@ function useTestContext(request: LegalRequest) {
   };
 }
 
-async function createDocument(app: INestApplication<App>, key: string) {
+async function createDocument(
+  app: INestApplication<App>,
+  key: string,
+  documentType = 'terms_and_conditions',
+) {
   const issuer = await createIssuer(app, `issuer_${key}`);
   const application = await request(app.getHttpServer())
     .post('/v1/legal/applications')
@@ -979,6 +1013,7 @@ async function createDocument(app: INestApplication<App>, key: string) {
       key,
       locale: 'es-MX',
       title: 'Terminos',
+      documentType,
     })
     .expect(201)
     .then(

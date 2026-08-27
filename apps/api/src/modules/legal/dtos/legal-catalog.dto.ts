@@ -1,5 +1,4 @@
 import {
-  ArrayMinSize,
   IsBoolean,
   IsArray,
   IsDateString,
@@ -238,6 +237,14 @@ export class CreateDocumentDto {
   @MinLength(2)
   @MaxLength(40)
   documentType?: string;
+
+  @IsOptional()
+  @IsIn(['standard', 'integral', 'simplified', 'short'])
+  documentVariant?: 'standard' | 'integral' | 'simplified' | 'short';
+
+  @IsOptional()
+  @IsUUID()
+  parentDocumentId?: string;
 }
 
 export class UpdateDocumentDto {
@@ -328,6 +335,7 @@ export class PublishDraftDto {
   @IsString()
   @MinLength(1)
   @MaxLength(40)
+  @Matches(/^\d+\.\d+\.\d+$/)
   version: string;
 
   @IsDateString()
@@ -346,11 +354,11 @@ export class PublishDraftDto {
   @Min(0)
   gracePeriodDays?: number;
 
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => AcceptanceRuleInputDto)
-  rules: AcceptanceRuleInputDto[];
+  rules?: AcceptanceRuleInputDto[];
 }
 
 export class MePendingQueryDto {

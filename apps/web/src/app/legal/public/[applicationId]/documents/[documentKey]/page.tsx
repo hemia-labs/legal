@@ -24,13 +24,11 @@ export default async function PublicLegalDocumentPage({
     return response.json() as Promise<PublicDocument>;
   });
   const htmlUrl = document.artifacts.html?.url;
-  const pdfUrl = document.artifacts.pdf?.url;
-  const contentHtml = htmlUrl
-    ? await fetch(htmlUrl, { cache: "no-store" }).then((response) => {
-        if (!response.ok) throw new Error("Published legal document content not found");
-        return response.text();
-      })
-    : "";
+  if (!htmlUrl) throw new Error("Published legal document HTML not found");
+  const contentHtml = await fetch(htmlUrl, { cache: "no-store" }).then((response) => {
+    if (!response.ok) throw new Error("Published legal document content not found");
+    return response.text();
+  });
 
   return (
     <main className="min-h-screen bg-background px-4 py-8 text-foreground sm:px-6 lg:px-8">
@@ -42,33 +40,29 @@ export default async function PublicLegalDocumentPage({
           <p className="mt-2 text-sm text-muted-foreground">
             Version {document.version.version} - {document.document.locale}
           </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Vigente desde {formatDate(document.version.effectiveFrom)}
+          </p>
           <p className="mt-1 font-mono text-xs text-muted-foreground">
             contentHash: {document.version.contentHash}
           </p>
         </div>
-        {htmlUrl ? (
-          <div
-            className="mt-6 max-w-none text-sm leading-7"
-            dangerouslySetInnerHTML={{ __html: contentHtml }}
-          />
-        ) : pdfUrl ? (
-          <div className="mt-6 space-y-4">
-            <a
-              className="inline-flex h-12 items-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground"
-              href={pdfUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Abrir documento PDF
-            </a>
-            <iframe className="h-[70vh] w-full rounded-lg border border-border" src={pdfUrl} title={document.document.title} />
-          </div>
-        ) : (
-          <p className="mt-6 text-sm text-muted-foreground">Este documento no tiene un artefacto visual disponible.</p>
+        {document.privacyNotice?.integralDocumentKey && document.privacyNotice.integralDocumentKey !== document.document.key && (
+          <p className="mt-6 rounded-lg border border-info bg-info-subtle px-4 py-3 text-sm text-info">
+            Consulta también el <a className="font-medium underline" href={`/legal/public/${applicationId}/documents/${document.privacyNotice.integralDocumentKey}?locale=${encodeURIComponent(document.document.locale)}`}>aviso de privacidad integral</a>.
+          </p>
         )}
+        <div
+          className="mt-6 max-w-none text-sm leading-7"
+          dangerouslySetInnerHTML={{ __html: contentHtml }}
+        />
       </article>
     </main>
   );
+}
+
+function formatDate(value: string | null) {
+  return value ? new Intl.DateTimeFormat("es-MX", { dateStyle: "long" }).format(new Date(value)) : "—";
 }
 
 function LocaleRequiredState() {

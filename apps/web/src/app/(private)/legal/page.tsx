@@ -171,7 +171,6 @@ export default function LegalPage() {
   const [acceptances, setAcceptances] = useState<Acceptance[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
-  const [evidence, setEvidence] = useState<object | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [publishMessage, setPublishMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -331,10 +330,6 @@ export default function LegalPage() {
   async function archive(path: string) {
     await mutate(apiUrl, path, undefined, "DELETE");
     await load();
-  }
-
-  async function loadEvidence(id: string) {
-    setEvidence(await api<object>(apiUrl, `/acceptances/${id}/evidence`));
   }
 
   async function retryNotification(id: string) {
@@ -822,9 +817,6 @@ export default function LegalPage() {
                   <TableHead>
                     Fecha
                   </TableHead>
-                  <TableHead className="text-right">
-                    Evidencia
-                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -842,16 +834,6 @@ export default function LegalPage() {
                     <TableCell>
                       {acceptance.acceptedAt}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => void run(() => loadEvidence(acceptance.id))}
-                        className="h-12"
-                      >
-                        Ver
-                      </Button>
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -862,11 +844,6 @@ export default function LegalPage() {
               </p>
             )}
           </div>
-          {evidence && (
-            <pre className="border-t border-border bg-surface-soft p-5 text-xs whitespace-pre-wrap">
-              {JSON.stringify(evidence, null, 2)}
-            </pre>
-          )}
         </Panel>
       )}
 

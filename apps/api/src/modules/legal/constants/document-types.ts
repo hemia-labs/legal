@@ -1,50 +1,73 @@
-export const LEGAL_DOCUMENT_TYPES = [
-  {
-    code: 'terms_and_conditions',
-    name: 'Términos y condiciones',
-  },
-  {
-    code: 'privacy_notice',
-    name: 'Aviso de privacidad',
-  },
-  {
-    code: 'acceptable_use_policy',
-    name: 'Política de uso aceptable',
-  },
-  {
-    code: 'ai_usage_policy',
-    name: 'Política de uso de IA',
-  },
-  {
-    code: 'cookie_policy',
-    name: 'Política de cookies',
-  },
-  {
-    code: 'security_policy',
-    name: 'Política de seguridad',
-  },
-  {
-    code: 'data_processing_agreement',
-    name: 'Acuerdo de tratamiento de datos',
-  },
-  {
-    code: 'saas_agreement',
-    name: 'Contrato SaaS',
-  },
-  {
-    code: 'nda',
-    name: 'Acuerdo de confidencialidad',
-  },
-  {
-    code: 'custom_policy',
-    name: 'Política personalizada',
-  },
-  {
-    code: 'terms',
-    name: 'Términos y condiciones (legado)',
-  },
-] as const;
+import type { SourceKind } from '../../storage/types/storage.types';
 
-export const LEGAL_DOCUMENT_TYPE_CODES = LEGAL_DOCUMENT_TYPES.map(
-  ({ code }) => code,
+export type LegalDocumentWorkflow = 'public' | 'internal';
+export type LegalDocumentVariant = 'standard' | 'integral' | 'simplified' | 'short';
+export type AcceptancePolicy = 'required' | 'optional' | 'configurable';
+
+export type LegalDocumentPolicy = {
+  name: string;
+  workflow: LegalDocumentWorkflow;
+  allowedSourceKinds: readonly SourceKind[];
+  requiresHtml: boolean;
+  acceptance: AcceptancePolicy;
+  variants: readonly LegalDocumentVariant[];
+};
+
+const publicPolicy = (
+  name: string,
+  acceptance: AcceptancePolicy = 'configurable',
+) => ({
+  name,
+  workflow: 'public' as const,
+  allowedSourceKinds: ['markdown', 'html'] as const,
+  requiresHtml: true,
+  acceptance,
+  variants: ['standard'] as const,
+});
+
+export const LEGAL_DOCUMENT_POLICIES: Record<string, LegalDocumentPolicy> = {
+  terms_and_conditions: publicPolicy('Términos y condiciones', 'required'),
+  privacy_notice: {
+    ...publicPolicy('Aviso de privacidad'),
+    variants: ['integral', 'simplified', 'short'],
+  },
+  acceptable_use_policy: publicPolicy('Política de uso aceptable'),
+  ai_usage_policy: publicPolicy('Política de uso de IA'),
+  cookie_policy: publicPolicy('Política de cookies'),
+  security_policy: publicPolicy('Política de seguridad'),
+  custom_policy: publicPolicy('Política personalizada'),
+  data_processing_agreement: {
+    name: 'Acuerdo de tratamiento de datos',
+    workflow: 'internal',
+    allowedSourceKinds: ['pdf', 'markdown', 'html'],
+    requiresHtml: false,
+    acceptance: 'optional',
+    variants: ['standard'],
+  },
+  saas_agreement: {
+    name: 'Contrato SaaS',
+    workflow: 'internal',
+    allowedSourceKinds: ['pdf', 'markdown', 'html'],
+    requiresHtml: false,
+    acceptance: 'optional',
+    variants: ['standard'],
+  },
+  nda: {
+    name: 'Acuerdo de confidencialidad',
+    workflow: 'internal',
+    allowedSourceKinds: ['pdf', 'markdown', 'html'],
+    requiresHtml: false,
+    acceptance: 'optional',
+    variants: ['standard'],
+  },
+};
+
+export const LEGAL_DOCUMENT_TYPES = Object.entries(LEGAL_DOCUMENT_POLICIES).map(
+  ([code, policy]) => ({ code, ...policy }),
 );
+
+export const LEGAL_DOCUMENT_TYPE_CODES = Object.keys(LEGAL_DOCUMENT_POLICIES);
+
+export function documentPolicy(documentType: string) {
+  return LEGAL_DOCUMENT_POLICIES[documentType];
+}

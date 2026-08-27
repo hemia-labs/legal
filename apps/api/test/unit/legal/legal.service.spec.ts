@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { LegalActor } from '../../../src/common/types/legal-request';
 import { AuditEvent } from '../../../src/modules/legal/entities/audit-event.entity';
 import { LegalAcceptance } from '../../../src/modules/legal/entities/legal-acceptance.entity';
@@ -6,7 +6,6 @@ import { LegalAcceptanceRule } from '../../../src/modules/legal/entities/legal-a
 import { LegalApplication } from '../../../src/modules/legal/entities/legal-application.entity';
 import { LegalDocument } from '../../../src/modules/legal/entities/legal-document.entity';
 import { LegalDocumentVersion } from '../../../src/modules/legal/entities/legal-document-version.entity';
-import { LegalEvidence } from '../../../src/modules/legal/entities/legal-evidence.entity';
 import { LegalIssuer } from '../../../src/modules/legal/entities/legal-issuer.entity';
 import { LegalNotification } from '../../../src/modules/legal/entities/legal-notification.entity';
 import { LegalPublication } from '../../../src/modules/legal/entities/legal-publication.entity';
@@ -51,7 +50,6 @@ describe('LegalService', () => {
   let outbox: Repo<OutboxEvent>;
   let publications: Repo<LegalPublication>;
   let publicationAssets: Repo<LegalPublicationAsset>;
-  let evidences: Repo<LegalEvidence>;
   let service: LegalService;
 
   beforeEach(() => {
@@ -66,7 +64,6 @@ describe('LegalService', () => {
     outbox = new Repo();
     publications = new Repo();
     publicationAssets = new Repo();
-    evidences = new Repo();
     service = new LegalService(
       issuers as never,
       applications as never,
@@ -79,7 +76,6 @@ describe('LegalService', () => {
       outbox as never,
       publications as never,
       publicationAssets as never,
-      evidences as never,
       dataSource([
         [LegalIssuer, issuers],
         [LegalApplication, applications],
@@ -92,7 +88,6 @@ describe('LegalService', () => {
         [OutboxEvent, outbox],
         [LegalPublication, publications],
         [LegalPublicationAsset, publicationAssets],
-        [LegalEvidence, evidences],
       ]) as never,
       {
         rolesFromRequest: () => [],
@@ -225,6 +220,19 @@ describe('LegalService', () => {
       service.updateDocument(document.id, { title: 'No permitido' }, actor),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(audit.rows).toHaveLength(auditCount);
+  });
+
+  it('soft deletes a document with an audit event', async () => {
+    const document = await createDocument(service);
+
+    await service.deleteDocument(document.id, actor);
+
+    expect(documents.rows[0].deletedAt).toBeInstanceOf(Date);
+    expect(audit.rows.at(-1)).toMatchObject({
+      action: 'legal.document.delete',
+      entityType: 'legal_document',
+      entityId: document.id,
+    });
   });
 
   it('lists documents by issuer and application context', async () => {
@@ -485,12 +493,96 @@ describe('LegalService', () => {
       'ai_usage_policy',
       'cookie_policy',
       'security_policy',
+      'custom_policy',
       'data_processing_agreement',
       'saas_agreement',
       'nda',
-      'custom_policy',
-      'terms',
     ]);
+  });
+
+  it('enforces privacy variants and their integral parent', async () => {
+    const issuer = await service.createIssuer(issuerDto('issuer_privacy'), actor);
+    const app = await service.createApplication(
+      { issuerId: issuer.id, key: 'privacy', name: 'Privacy' },
+      actor,
+    );
+    const integral = await service.createDocument(
+      {
+        issuerId: issuer.id,
+        applicationId: app.id,
+        key: 'privacy_integral',
+        locale: 'es-MX',
+        title: 'Aviso integral',
+        documentType: 'privacy_notice',
+        documentVariant: 'integral',
+      },
+      actor,
+    );
+    const short = await service.createDocument(
+      {
+        issuerId: issuer.id,
+        applicationId: app.id,
+        key: 'privacy_short',
+        locale: 'es-MX',
+        title: 'Aviso corto',
+        documentType: 'privacy_notice',
+        documentVariant: 'short',
+        parentDocumentId: integral.id,
+      },
+      actor,
+    );
+
+    expect(integral.documentVariant).toBe('integral');
+    expect(short.parentDocumentId).toBe(integral.id);
+    await expect(
+      service.createDocument(
+        {
+          issuerId: issuer.id,
+          applicationId: app.id,
+          key: 'privacy_invalid',
+          locale: 'es-MX',
+          title: 'Aviso inválido',
+          documentType: 'privacy_notice',
+          documentVariant: 'short',
+        },
+        actor,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects PDF sources for public documents and accepts them internally', async () => {
+    const publicDocument = await createDocument(service);
+    await expect(
+      service.createDraft(
+        publicDocument.id,
+        { buffer: Buffer.from('%PDF-1.7'), mimetype: 'application/pdf', originalname: 'terms.pdf' },
+        actor,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    const issuer = await service.createIssuer(issuerDto('issuer_internal'), actor);
+    const app = await service.createApplication(
+      { issuerId: issuer.id, key: 'internal', name: 'Internal' },
+      actor,
+    );
+    const internal = await service.createDocument(
+      {
+        issuerId: issuer.id,
+        applicationId: app.id,
+        key: 'dpa',
+        locale: 'es-MX',
+        title: 'DPA',
+        documentType: 'data_processing_agreement',
+      },
+      actor,
+    );
+    await expect(
+      service.createDraft(
+        internal.id,
+        { buffer: Buffer.from('%PDF-1.7'), mimetype: 'application/pdf', originalname: 'dpa.pdf' },
+        actor,
+      ),
+    ).resolves.toMatchObject({ sourceKind: 'pdf' });
   });
 
   it('returns the selected public locale and acceptance summary', async () => {
@@ -500,8 +592,6 @@ describe('LegalService', () => {
       documentId: document.id,
       version: '1.0.0',
       status: 'published',
-      contentMarkdown: '# Terminos',
-      contentHtml: '<h1>Terminos</h1>',
       contentHash: 'b'.repeat(64),
       effectiveFrom: new Date('2026-08-01T00:00:00.000Z'),
     } as LegalDocumentVersion);
@@ -518,8 +608,6 @@ describe('LegalService', () => {
       status: 'published',
       effectiveFrom: version.effectiveFrom,
       rulesSnapshot: [],
-      contentMarkdown: version.contentMarkdown,
-      contentHtml: version.contentHtml,
       contentHash: version.contentHash,
     } as LegalPublication);
     await rules.save({
@@ -537,7 +625,7 @@ describe('LegalService', () => {
       publicationId: 'publication-public',
       kind: 'html',
       s3Bucket: 'legal-test',
-      s3ObjectKey: 'documents/issuer/application/es-mx/global/global/terms/1.0.0/html.html',
+      s3ObjectKey: `legal/documents/${document.id}/versions/1.0.0/html.html`,
       s3VersionId: 'asset-version',
       contentType: 'text/html',
       sizeBytes: 20,
@@ -609,7 +697,7 @@ describe('LegalService', () => {
     }).storage;
     storage.putImmutable.mockResolvedValue({
       bucket: 'legal-test',
-      key: 'documents/issuer/application/es-mx/global/global/terms/draft/source.html',
+      key: `legal/documents/${document.id}/draft/source/${'a'.repeat(64)}.md`,
       versionId: 'source-version',
       etag: null,
       contentType: 'text/html',
@@ -636,7 +724,6 @@ describe('LegalService', () => {
     expect(draft.sourceHash).toMatch(/^[a-f0-9]{64}$/);
     expect(draft.contentHash).toMatch(/^[a-f0-9]{64}$/);
     expect(draft.sourceHash).not.toBe(draft.contentHash);
-    expect(draft).not.toHaveProperty('contentMarkdown');
   });
 
   it('publishes a draft with reproducible hash, rule and outbox event', async () => {
@@ -666,6 +753,14 @@ describe('LegalService', () => {
     await expect(
       service.updateDraft(document.id, markdownSource('# nope'), actor),
     ).rejects.toThrow('Draft not found');
+
+    const nextDraft = await service.createDraft(
+      document.id,
+      markdownSource('# v2'),
+      actor,
+    );
+    expect(nextDraft.status).toBe('draft');
+    expect(versions.rows.filter((row) => row.version === 'draft')).toHaveLength(1);
   });
 
   it('rejects duplicate and overlapping publication rules', async () => {

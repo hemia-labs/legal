@@ -33,12 +33,6 @@ export class LegalDocumentVersion {
   @Column({ length: 20, default: 'draft' })
   status: string;
 
-  @Column({ name: 'content_markdown', type: 'text', nullable: true })
-  contentMarkdown: string | null;
-
-  @Column({ name: 'content_html', type: 'text', nullable: true })
-  contentHtml: string | null;
-
   @Column({ name: 'content_hash', type: 'varchar', length: 64, nullable: true })
   contentHash: string | null;
 

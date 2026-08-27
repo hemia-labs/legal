@@ -30,7 +30,7 @@ export default registerAs('sso', (): SsoConfig => {
       env('SSO_SCOPE') ??
       `openid profile email offline_access ${productCode}.access`,
     cookieName: env('SSO_COOKIE_NAME') ?? `${productCode}_session`,
-    sessionTtlSeconds: Number(env('SSO_SESSION_TTL_SECONDS') ?? 604800),
+    sessionTtlSeconds: Number(env('SSO_SESSION_TTL_SECONDS') ?? 600),
     cookieSecure:
       process.env.SSO_COOKIE_SECURE === 'true' ||
       process.env.NODE_ENV === 'production',
