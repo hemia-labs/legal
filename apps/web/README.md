@@ -25,7 +25,7 @@ apps/web/
       globals.css                # tokens Tailwind v4 + tema shadcn
       [section]/page.tsx         # ruta dinámica de ejemplo
     components/
-      app-sidebar.tsx, app-topbar.tsx, stat-card.tsx
+      app-sidebar.tsx, app-topbar.tsx
       ui/                        # primitivos shadcn (button, input, badge, table)
     lib/
       nav.ts, utils.ts           # navegación y helper cn()
@@ -56,3 +56,7 @@ bunx shadcn@latest add <componente>
 ```
 
 Se instalan en `src/components/ui` según `components.json`.
+
+## Build con Turbopack
+
+`bun run build` utiliza Turbopack. Next.js y `eslint-config-next` están fijados en 16.3.8: el parche elimina el fallo reproducido en 16.3.0 al iniciar el proceso de PostCSS para CSS y fuentes locales (`binding to a port: EPERM`). No se necesita `--webpack` ni cambiar la configuración de CSS.

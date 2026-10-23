@@ -15,6 +15,7 @@ import {
 } from 'typeorm';
 import { AuditEvent } from '../entities/audit-event.entity';
 import { LegalAcceptanceRule } from '../entities/legal-acceptance-rule.entity';
+import { LegalDocument } from '../entities/legal-document.entity';
 import { LegalDocumentVersion } from '../entities/legal-document-version.entity';
 import { LegalNotification } from '../entities/legal-notification.entity';
 import { LegalPublication } from '../entities/legal-publication.entity';
@@ -121,7 +122,8 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
       await this.outbox.save(event);
     } catch (error) {
       event.attemptCount += 1;
-      event.status = event.attemptCount >= BACKOFF_MINUTES.length ? 'failed' : 'pending';
+      event.status =
+        event.attemptCount >= BACKOFF_MINUTES.length ? 'failed' : 'pending';
       event.nextRunAt =
         event.status === 'pending'
           ? minutesFromNow(BACKOFF_MINUTES[event.attemptCount - 1])
@@ -137,8 +139,16 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
     const locale = stringPayload(event, 'locale');
     if (!locale) throw new Error('Publication locale is required');
 
-    const publication = await this.publications.findOneBy({ id: publicationId });
+    const publication = await this.publications.findOneBy({
+      id: publicationId,
+    });
     if (!publication || publication.status === 'published') return;
+    if (
+      !(await this.dataSource
+        .getRepository(LegalDocument)
+        .existsBy({ id: publication.documentId }))
+    )
+      return;
     publication.status = 'uploading';
     publication.failureReason = null;
     await this.publications.save(publication);
@@ -158,7 +168,11 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
           throw new Error('Source hash does not match publication payload');
         }
         const sourceKind = stringPayload(event, 'sourceKind');
-        if (sourceKind !== 'pdf' && sourceKind !== 'html' && sourceKind !== 'markdown') {
+        if (
+          sourceKind !== 'pdf' &&
+          sourceKind !== 'html' &&
+          sourceKind !== 'markdown'
+        ) {
           throw new Error('Invalid legal source kind');
         }
         const analysis = analyzeLegalSource({
@@ -179,9 +193,10 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
         uploaded.push({ kind: 'source', ref: finalSource });
 
         if (sourceKind !== 'pdf') {
-          const html = sourceKind === 'html'
-            ? canonicalHtml(sanitizeHtml(sourceBody.toString('utf8')))
-            : renderMarkdown(sourceBody.toString('utf8'));
+          const html =
+            sourceKind === 'html'
+              ? canonicalHtml(sanitizeHtml(sourceBody.toString('utf8')))
+              : renderMarkdown(sourceBody.toString('utf8'));
           const htmlRef = await this.storage.putImmutable(
             buildPublicationArtifactKey(context, 'html'),
             Buffer.from(html, 'utf8'),
@@ -234,7 +249,9 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
           await versions.save(draft);
         }
 
-        const version = await versions.findOneBy({ id: current.documentVersionId });
+        const version = await versions.findOneBy({
+          id: current.documentVersionId,
+        });
         if (!version) throw new Error('Publication version not found');
         version.status = 'published';
         version.publishedAt = new Date();
@@ -257,7 +274,7 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
               issuerId: current.issuerId,
               applicationId: current.applicationId,
               organizationId: stringValue(rule.organizationId),
-              productTenantId: stringValue(rule.productTenantId),
+              productTenantId: null,
               role: stringValue(rule.role),
               acceptanceMode: String(rule.acceptanceMode),
               isBlocking:
@@ -323,7 +340,8 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
       });
     } catch (error) {
       publication.status = 'failed';
-      publication.failureReason = error instanceof Error ? error.message : String(error);
+      publication.failureReason =
+        error instanceof Error ? error.message : String(error);
       await this.publications.save(publication);
       throw error;
     }
@@ -358,7 +376,7 @@ export class LegalOutboxWorker implements OnModuleInit, OnModuleDestroy {
             documentVersionId: rule.versionId,
             acceptanceRuleId: rule.id,
             organizationId: rule.organizationId,
-            productTenantId: rule.productTenantId,
+            productTenantId: null,
             channel,
             recipientLogicalId,
             status: 'pending',
@@ -397,7 +415,6 @@ function recipientForRule(rule: LegalAcceptanceRule) {
     rule.issuerId,
     rule.applicationId,
     rule.organizationId ?? '*',
-    rule.productTenantId ?? '*',
     rule.role ?? '*',
     rule.acceptanceMode,
   ].join(':');

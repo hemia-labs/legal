@@ -1,3 +1,4 @@
+import { integrationTypes, integrationsRoot } from "@/lib/integration-catalog";
 import {
   Bell,
   BookOpen,
@@ -44,6 +45,13 @@ export const adminNav = [
     empty: "Aún no hay emisores ni aplicaciones configurados.",
     children: [
       {
+        href: "/catalogs/integrations",
+        label: "Integraciones",
+        tab: "integrations",
+        createLabel: "Nueva integración",
+        editLabel: "Editar integración",
+      },
+      {
         href: "/catalogs/issuers",
         label: "Emisores legales",
         tab: "issuers",
@@ -84,13 +92,20 @@ export const supportNav = [
 
 export const nav = [
   ...mainNav,
-  ...adminNav.map(({ href, label, icon, empty }) => ({ href, label, icon, empty })),
+  ...adminNav.map(({ href, label, icon, empty }) => ({
+    href,
+    label,
+    icon,
+    empty,
+  })),
   ...supportNav,
 ];
 
 export function labelFor(pathname: string) {
   const match = nav
-    .filter((n) => (n.href === "/" ? pathname === "/" : pathname.startsWith(n.href)))
+    .filter((n) =>
+      n.href === "/" ? pathname === "/" : pathname.startsWith(n.href),
+    )
     .sort((a, b) => b.href.length - a.href.length)[0];
   return match?.label ?? "Sección";
 }
@@ -100,10 +115,31 @@ type Breadcrumb = {
   href?: string;
 };
 
+const detailLabels: Record<string, string> = {
+  "/documents": "Detalle del documento",
+  "/acceptances": "Detalle de aceptación",
+  "/notifications": "Detalle de notificación",
+  "/audit": "Detalle de evento",
+};
+
+function detailLabelFor(href: string) {
+  return detailLabels[href] ?? "Detalle";
+}
+
 export function breadcrumbsFor(pathname: string): Breadcrumb[] {
   const group = adminNav.find(({ href }) => pathname.startsWith(href));
 
-  if (!group) return [{ label: labelFor(pathname) }];
+  if (!group) {
+    const item = mainNav.find(
+      ({ href }) => pathname === href || pathname.startsWith(`${href}/`),
+    );
+    if (!item) return [{ label: labelFor(pathname) }];
+    if (pathname === item.href) return [{ label: item.label }];
+    return [
+      { label: item.label, href: item.href },
+      { label: detailLabelFor(item.href) },
+    ];
+  }
 
   const child = group.children.find(
     ({ href }) => pathname === href || pathname.startsWith(`${href}/`),
@@ -117,9 +153,39 @@ export function breadcrumbsFor(pathname: string): Breadcrumb[] {
   if (pathname === child.href) return [...breadcrumbs, { label: child.label }];
 
   breadcrumbs.push({ label: child.label, href: child.href });
-  if (pathname.endsWith("/new") && "createLabel" in child && child.createLabel) {
+  if (child.href === integrationsRoot) {
+    const type = integrationTypes.find((item) => pathname === `${integrationsRoot}/${item.key}` || pathname.startsWith(`${integrationsRoot}/${item.key}/`));
+    if (type) {
+      const typePath = `${integrationsRoot}/${type.key}`;
+      const suffix = pathname.slice(typePath.length);
+      breadcrumbs.push({ label: type.title, ...(suffix ? { href: typePath } : {}) });
+      if (suffix === "/new") breadcrumbs.push({ label: "Nueva integración" });
+      else {
+        const editMatch = suffix.match(/^\/([^/]+)\/edit$/);
+        if (editMatch) {
+          breadcrumbs.push({
+            label: "Detalle de integración",
+            href: `${typePath}/${editMatch[1]}`,
+          });
+          breadcrumbs.push({ label: "Editar integración" });
+        } else if (suffix) {
+          breadcrumbs.push({ label: "Detalle de integración" });
+        }
+      }
+      return breadcrumbs;
+    }
+  }
+  if (
+    pathname.endsWith("/new") &&
+    "createLabel" in child &&
+    child.createLabel
+  ) {
     breadcrumbs.push({ label: child.createLabel });
-  } else if (pathname.endsWith("/edit") && "editLabel" in child && child.editLabel) {
+  } else if (
+    pathname.endsWith("/edit") &&
+    "editLabel" in child &&
+    child.editLabel
+  ) {
     breadcrumbs.push({ label: child.editLabel });
   }
   return breadcrumbs;

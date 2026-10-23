@@ -9,7 +9,7 @@ export default async function PrivateLayout({
   const session = await legalServerApi<LegalSession>("/v1/legal/session");
 
   if (!session.organizations.length) {
-    return <AccessDenied message="Tu usuario no tiene acceso a un tenant Legal activo." />;
+    return <AccessDenied message="Tu usuario no tiene acceso administrativo a Legal en ninguna organización." />;
   }
   if (!session.activeOrganizationId) {
     return <OrganizationSelector session={session} blocking />;

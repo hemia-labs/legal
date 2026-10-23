@@ -22,34 +22,33 @@ import {
   Copy,
   Funnel,
   LoaderCircle,
-  MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
-  RotateCcw,
   Search,
   Trash2,
-  X,
 } from "lucide-react";
 import { ActionMenu } from "@/components/action-menu";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/zuno/badge";
+import { Card, CardContent, CardFooter } from "@/components/zuno/card";
+import { StatusBadge } from "@/components/zuno/status-badge";
+import { Button } from "@/components/zuno/button";
+import { PageHeading } from "@/components/page-heading";
+import { Alert } from "@/components/zuno/alert";
+import { Input } from "@/components/zuno/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@/components/zuno/skeleton";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import {
   Pagination,
   PaginationContent,
   PaginationItem,
-  PaginationLink,
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
@@ -158,14 +157,10 @@ export default function ApplicationsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-        <div>
-          <h1 className="text-2xl font-bold text-heading">Aplicaciones</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Administra los productos y sistemas que consumen documentos legales.
-          </p>
-        </div>
-        {canCreate && (
+      <PageHeading
+        title="Aplicaciones"
+        description="Administra los productos y sistemas que consumen documentos legales."
+        actions={canCreate ? (
           <Button
             render={<Link href="/catalogs/applications/new" />}
             nativeButton={false}
@@ -176,8 +171,8 @@ export default function ApplicationsPage() {
             <Plus className="size-4" aria-hidden="true" />
             Crear aplicación
           </Button>
-        )}
-      </header>
+        ) : undefined}
+      />
 
       {error && !forbidden ? (
         <ApplicationErrorState error={error} onRetry={() => void load(page)} />
@@ -187,59 +182,41 @@ export default function ApplicationsPage() {
           description="Tu rol no incluye el permiso legal.applications.view."
         />
       ) : (
-        <>
-          {canCreate && !activeIssuers.length && (
-            <div
-              role="alert"
-              className="rounded-lg border border-warning bg-warning-subtle px-4 py-3 text-sm text-warning"
-            >
-              Necesitas un emisor activo antes de crear una aplicación. <Link className="font-semibold underline" href="/catalogs/issuers/new">Crear emisor</Link>
-            </div>
-          )}
-
-          {meta.total > 0 || hasFilters ? (
-            <ApplicationTable
-              applications={applications}
-              issuerNames={issuerNames}
-              canEdit={canEdit}
-              canArchive={canArchive}
-              canDelete={canDelete}
-              loading={loading}
-              query={query}
-              issuerFilter={issuerFilter}
-              statusFilter={statusFilter}
-              hasFilters={hasFilters}
-              issuers={issuers}
-              page={page}
-              total={meta.total}
-              totalPages={meta.totalPages}
-              onQueryChange={setQuery}
-              onIssuerChange={(value) => {
-                setIssuerFilter(value);
-                setPage(1);
-              }}
-              onStatusChange={(value) => {
-                setStatusFilter(value);
-                setPage(1);
-              }}
-              onChanged={() => void load(page)}
-              onPageChange={setPage}
-              onClearFilters={() => {
-                setQuery("");
-                setSearch("");
-                setIssuerFilter("all");
-                setStatusFilter("all");
-                setPage(1);
-              }}
-            />
-          ) : (
-            <ApplicationEmptyState
-              title="Aún no hay aplicaciones"
-              description="Crea una aplicación para definir dónde se publican y solicitan documentos legales."
-              action={canCreate && activeIssuers.length > 0}
-            />
-          )}
-        </>
+        <ApplicationTable
+          applications={applications}
+          issuerNames={issuerNames}
+          canEdit={canEdit}
+          canArchive={canArchive}
+          canDelete={canDelete}
+          needsActiveIssuer={canCreate && !activeIssuers.length}
+          loading={loading}
+          query={query}
+          issuerFilter={issuerFilter}
+          statusFilter={statusFilter}
+          hasFilters={hasFilters}
+          issuers={issuers}
+          page={page}
+          total={meta.total}
+          totalPages={meta.totalPages}
+          onQueryChange={setQuery}
+          onIssuerChange={(value) => {
+            setIssuerFilter(value);
+            setPage(1);
+          }}
+          onStatusChange={(value) => {
+            setStatusFilter(value);
+            setPage(1);
+          }}
+          onChanged={() => void load(page)}
+          onPageChange={setPage}
+          onClearFilters={() => {
+            setQuery("");
+            setSearch("");
+            setIssuerFilter("all");
+            setStatusFilter("all");
+            setPage(1);
+          }}
+        />
       )}
     </div>
   );
@@ -251,6 +228,7 @@ function ApplicationTable({
   canEdit,
   canArchive,
   canDelete,
+  needsActiveIssuer,
   loading,
   query,
   issuerFilter,
@@ -272,6 +250,7 @@ function ApplicationTable({
   canEdit: boolean;
   canArchive: boolean;
   canDelete: boolean;
+  needsActiveIssuer: boolean;
   loading: boolean;
   query: string;
   issuerFilter: string;
@@ -296,6 +275,7 @@ function ApplicationTable({
   const hasPendingFilterChanges =
     draftIssuerFilter !== issuerFilter || draftStatusFilter !== statusFilter;
   const visibleFilterCount = hasPendingFilterChanges ? draftFilterCount : activeFilterCount;
+  const pageCount = Math.max(1, totalPages);
   const [pendingAction, setPendingAction] = useState<{
     application: Application;
     type: ApplicationAction;
@@ -335,12 +315,12 @@ function ApplicationTable({
     {
       accessorKey: "name",
       header: "Aplicación",
-      cell: ({ row }) => <span className="font-medium text-foreground">{row.original.name}</span>,
+      cell: ({ row }) => <span className="block max-w-56 truncate font-semibold text-foreground" title={row.original.name}>{row.original.name}</span>,
     },
     {
       accessorKey: "key",
       header: "Clave técnica",
-      cell: ({ row }) => <span className="font-mono text-xs">{row.original.key}</span>,
+      cell: ({ row }) => <span className="block max-w-44 truncate font-mono text-xs" title={row.original.key}>{row.original.key}</span>,
     },
     {
       accessorKey: "issuerId",
@@ -351,9 +331,9 @@ function ApplicationTable({
       accessorKey: "status",
       header: "Estado",
       cell: ({ row }) => (
-        <Badge variant={statusVariant(row.original.status)}>
+        <StatusBadge status={statusVariant(row.original.status)}>
           {statusLabel(row.original.status)}
-        </Badge>
+        </StatusBadge>
       ),
     },
     {
@@ -451,215 +431,165 @@ function ApplicationTable({
   ];
 
   return (
-    <section className="overflow-hidden rounded-lg border border-surface-line bg-card p-1 shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-surface-line p-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="relative min-w-0 lg:w-80">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-          <Input
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="Buscar aplicaciones…"
-            aria-label="Buscar aplicaciones"
-            className="pl-9"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <DropdownMenu
-            open={filtersOpen}
-            onOpenChange={(open) => {
-              if (open) {
-                setDraftIssuerFilter(issuerFilter);
-                setDraftStatusFilter(statusFilter);
-              }
-              setFiltersOpen(open);
-            }}
-          >
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="outline"
-                  className="border-border/70 bg-transparent px-4 text-muted-foreground hover:bg-muted hover:text-foreground"
-                />
-              }
-            >
-              <Funnel className="size-4" aria-hidden="true" />
-              Filtros
-              {visibleFilterCount > 0 && <Badge variant="secondary">{visibleFilterCount}</Badge>}
-              {hasFilters && (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Limpiar filtros"
-                  className="ml-1 inline-flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    clearFilters();
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      clearFilters();
-                    }
-                  }}
-                >
-                  <X className="size-3.5" aria-hidden="true" />
-                </span>
-              )}
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[min(22rem,calc(100vw-2rem))] overflow-hidden p-0">
-              <div className="border-b border-border bg-muted/30 px-3 py-2.5">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-semibold">Filtros</p>
-                  {visibleFilterCount > 0 && <Badge variant="secondary">{visibleFilterCount}</Badge>}
-                </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  Refina las aplicaciones por estado o emisor.
-                </p>
-              </div>
-              <div className="max-h-[min(20rem,60vh)] space-y-2 overflow-y-auto p-2">
-                <div className="rounded-md border border-border bg-card p-1">
-                  <p className="px-3 pb-0.5 pt-1 text-2xs font-semibold uppercase text-muted-foreground">
-                    Estado
-                  </p>
-                  <DropdownMenuRadioGroup
-                    value={draftStatusFilter}
-                    onValueChange={(value) => setDraftStatusFilter(value as ApplicationFilterStatus)}
-                  >
-                    <DropdownMenuRadioItem className="min-h-9 px-3" value="active" closeOnClick={false}>
-                      Activas
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem className="min-h-9 px-3" value="inactive" closeOnClick={false}>
-                      Inactivas
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem className="min-h-9 px-3" value="archived" closeOnClick={false}>
-                      Archivadas
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem className="min-h-9 px-3" value="all" closeOnClick={false}>
-                      Todas
-                    </DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </div>
-                <div className="rounded-md border border-border bg-card p-1">
-                  <p className="px-3 pb-0.5 pt-1 text-2xs font-semibold uppercase text-muted-foreground">
-                    Emisor
-                  </p>
-                  <DropdownMenuRadioGroup
-                    value={draftIssuerFilter}
-                    onValueChange={setDraftIssuerFilter}
-                  >
-                    <DropdownMenuRadioItem className="min-h-9 px-3" value="all" closeOnClick={false}>
-                      Todos los emisores
-                    </DropdownMenuRadioItem>
-                    {issuers.map((issuer) => (
-                      <DropdownMenuRadioItem className="min-h-9 px-3" key={issuer.id} value={issuer.id} closeOnClick={false}>
-                        {issuer.name}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 border-t border-border p-2">
-                <Button
-                  type="button"
-                  variant="link"
-                  size="sm"
-                  className="flex-1 px-1 text-muted-foreground hover:text-foreground disabled:bg-transparent disabled:text-muted-foreground"
-                  disabled={!hasFilters}
-                  onClick={clearFilters}
-                >
-                  Limpiar
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="flex-1 disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
-                  disabled={!hasPendingFilterChanges}
-                  onClick={() => {
-                    onIssuerChange(draftIssuerFilter);
-                    onStatusChange(draftStatusFilter);
-                    setFiltersOpen(false);
-                  }}
-                >
-                  Aplicar
-                </Button>
-              </div>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label="Más opciones de aplicaciones"
-                  className="border-border/70 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
-                />
-              }
-            >
-              <MoreHorizontal className="size-4" aria-hidden="true" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem
-                onClick={() => {
-                  setDraftStatusFilter("archived");
-                  onStatusChange("archived");
+    <Card className="overflow-hidden shadow-sm">
+      <CardContent className="space-y-4 p-5">
+        {needsActiveIssuer && (
+          <Alert variant="warning">
+            Necesitas un emisor activo antes de crear una aplicación. <Link className="font-semibold underline" href="/catalogs/issuers/new">Crear emisor</Link>
+          </Alert>
+        )}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p aria-live="polite" className="text-sm text-muted-foreground">
+            {loading ? "Actualizando aplicaciones…" : `${total} ${total === 1 ? "aplicación" : "aplicaciones"}`}
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative w-full sm:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                value={query}
+                onChange={(event) => onQueryChange(event.target.value)}
+                placeholder="Buscar aplicaciones…"
+                aria-label="Buscar aplicaciones"
+                className="pl-9"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <DropdownMenu
+                open={filtersOpen}
+                onOpenChange={(open) => {
+                  if (open) {
+                    setDraftIssuerFilter(issuerFilter);
+                    setDraftStatusFilter(statusFilter);
+                  }
+                  setFiltersOpen(open);
                 }}
-                disabled={statusFilter === "archived"}
               >
-                <Archive className="size-4" aria-hidden="true" />
-                Archivadas
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <DropdownMenuTrigger render={<Button variant="outline" className="min-w-28 px-4" />}>
+                  <Funnel className="size-4" aria-hidden="true" />
+                  Filtros
+                  {visibleFilterCount > 0 && <Badge variant="secondary">{visibleFilterCount}</Badge>}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-[min(22rem,calc(100vw-2rem))] overflow-hidden p-0">
+                  <div className="border-b border-border bg-muted/30 px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold">Filtros</p>
+                      {visibleFilterCount > 0 && <Badge variant="secondary">{visibleFilterCount}</Badge>}
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Refina las aplicaciones por estado o emisor.
+                    </p>
+                  </div>
+                  <div className="max-h-[min(22rem,60vh)] space-y-2 overflow-y-auto p-2">
+                    <div className="rounded-md border border-border p-1">
+                      <p className="px-3 py-1 text-xs font-semibold text-muted-foreground">Estado</p>
+                      <DropdownMenuRadioGroup
+                        aria-label="Estado de la aplicación"
+                        value={draftStatusFilter}
+                        onValueChange={(value) => setDraftStatusFilter(value as ApplicationFilterStatus)}
+                      >
+                        <DropdownMenuRadioItem className="min-h-10" value="active" closeOnClick={false}>
+                          Activas
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem className="min-h-10" value="inactive" closeOnClick={false}>
+                          Inactivas
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem className="min-h-10" value="archived" closeOnClick={false}>
+                          Archivadas
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem className="min-h-10" value="all" closeOnClick={false}>
+                          Todas
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </div>
+                    <div className="rounded-md border border-border p-1">
+                      <p className="px-3 py-1 text-xs font-semibold text-muted-foreground">Emisor</p>
+                      <DropdownMenuRadioGroup
+                        aria-label="Emisor de la aplicación"
+                        value={draftIssuerFilter}
+                        onValueChange={setDraftIssuerFilter}
+                      >
+                        <DropdownMenuRadioItem className="min-h-10" value="all" closeOnClick={false}>
+                          Todos los emisores
+                        </DropdownMenuRadioItem>
+                        {issuers.map((issuer) => (
+                          <DropdownMenuRadioItem className="min-h-10" key={issuer.id} value={issuer.id} closeOnClick={false}>
+                            {issuer.name}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 border-t border-border p-2">
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="flex-1 px-1 text-muted-foreground hover:text-foreground disabled:bg-transparent disabled:text-muted-foreground"
+                      disabled={!hasFilters}
+                      onClick={clearFilters}
+                    >
+                      Restablecer
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="flex-1 disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+                      disabled={!hasPendingFilterChanges}
+                      onClick={() => {
+                        onIssuerChange(draftIssuerFilter);
+                        onStatusChange(draftStatusFilter);
+                        setFiltersOpen(false);
+                      }}
+                    >
+                      Aplicar
+                    </Button>
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button variant="ghost" size="icon" aria-label="Recargar aplicaciones" title="Recargar aplicaciones" disabled={loading} onClick={onChanged}>
+                <RefreshCw className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div className={loading ? "relative px-2 pt-3 pb-3 opacity-60" : "relative px-2 pt-3 pb-3"} aria-busy={loading}>
+      </CardContent>
+      <div className="border-t border-border" aria-busy={loading}>
         <DataTable
           columns={columns}
           data={applications}
-          emptyMessage="No hay aplicaciones que coincidan con la búsqueda o filtros."
+          loading={loading}
+          loadingMessage="Cargando aplicaciones…"
+          emptyMessage={hasFilters
+            ? "No hay aplicaciones que coincidan con la búsqueda o filtros."
+            : "Aún no hay aplicaciones. Crea una para definir dónde se publican documentos legales."}
+          className="min-w-[900px]"
+          containerClassName="rounded-none border-0"
         />
       </div>
-      <footer className="flex flex-col gap-3 border-t border-surface-line p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-        <span>{total ? `${total} ${total === 1 ? "aplicación" : "aplicaciones"}` : "Sin resultados"}</span>
-        {totalPages > 0 && (
-          <Pagination className="mx-0 w-auto sm:justify-end">
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  disabled={page === 1 || loading}
-                  onClick={() => onPageChange(Math.max(1, page - 1))}
-                />
-              </PaginationItem>
-              {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
-                <PaginationItem key={pageNumber}>
-                  <PaginationLink
-                    isActive={pageNumber === page}
-                    disabled={loading}
-                    onClick={() => onPageChange(pageNumber)}
-                  >
-                    {pageNumber}
-                  </PaginationLink>
-                </PaginationItem>
-              ))}
-              <PaginationItem>
-                <PaginationNext
-                  disabled={page === totalPages || loading}
-                  onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        )}
-        {hasFilters && (
-          <Button variant="ghost" size="sm" className="gap-1.5" onClick={onClearFilters}>
-            <RotateCcw className="size-3.5" aria-hidden="true" />
-            Restablecer filtros
-          </Button>
-        )}
-      </footer>
+      <CardFooter className="flex flex-col gap-3 border-t border-border bg-card px-5 py-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <p>
+          {loading ? "Cargando…" : applications.length
+            ? `${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + applications.length} de ${total} ${total === 1 ? "aplicación" : "aplicaciones"}`
+            : `0 de ${total} ${total === 1 ? "aplicación" : "aplicaciones"}`}
+        </p>
+        <Pagination className="mx-0 w-auto sm:justify-end">
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                disabled={page === 1 || loading}
+                onClick={() => onPageChange(Math.max(1, page - 1))}
+              />
+            </PaginationItem>
+            <PaginationItem><span className="flex h-10 items-center px-2 tabular-nums">{page} de {pageCount}</span></PaginationItem>
+            <PaginationItem>
+              <PaginationNext
+                disabled={page >= pageCount || loading}
+                onClick={() => onPageChange(Math.min(pageCount, page + 1))}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      </CardFooter>
       <AlertDialog
         open={pendingAction !== null}
         onOpenChange={(open) => !open && !actingId && setPendingAction(null)}
@@ -694,7 +624,7 @@ function ApplicationTable({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </section>
+    </Card>
   );
 }
 
@@ -737,11 +667,9 @@ function actionDescription(action: ApplicationAction, name: string) {
 function ApplicationEmptyState({
   title,
   description,
-  action = false,
 }: {
   title: string;
   description: string;
-  action?: boolean;
 }) {
   return (
     <section className="grid min-h-panel-min place-items-center rounded-lg border border-border bg-card p-6 text-center shadow-sm">
@@ -751,16 +679,6 @@ function ApplicationEmptyState({
         </span>
         <h2 className="mt-4 text-lg font-semibold">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-        {action && (
-          <Button
-            render={<Link href="/catalogs/applications/new" />}
-            nativeButton={false}
-            className="mt-6 px-4"
-          >
-            <Plus className="size-4" aria-hidden="true" />
-            Crear aplicación
-          </Button>
-        )}
       </div>
     </section>
   );
@@ -792,13 +710,23 @@ function ApplicationsSkeleton() {
   return (
     <div className="flex flex-col gap-6" aria-busy="true">
       <span className="sr-only">Cargando aplicaciones…</span>
-      <div className="space-y-2">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-5 w-96 max-w-full" />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-5 w-96 max-w-full" />
+        </div>
+        <Skeleton className="h-10 w-36" />
       </div>
-      <div className="space-y-3 rounded-lg border border-border bg-card p-5 shadow-sm">
-        <Skeleton className="h-12 w-full" />
-        {Array.from({ length: 5 }, (_, index) => <Skeleton key={index} className="h-12 w-full" />)}
+      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-5">
+          <Skeleton className="h-5 w-24" />
+          <div className="flex flex-wrap gap-2"><Skeleton className="h-10 w-64 max-w-full" /><Skeleton className="h-10 w-28" /></div>
+        </div>
+        <div className="space-y-3 border-t border-border p-5">
+          <Skeleton className="h-10 w-full" />
+          {Array.from({ length: 5 }, (_, index) => <Skeleton key={index} className="h-12 w-full" />)}
+        </div>
+        <div className="border-t border-border p-5"><Skeleton className="h-5 w-44" /></div>
       </div>
     </div>
   );

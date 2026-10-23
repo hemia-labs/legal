@@ -19,9 +19,9 @@ import {
   Scale,
   XCircle,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { StatusBadge as ToneBadge } from "@/components/zuno/status-badge";
+import { Button } from "@/components/zuno/button";
+import { Input } from "@/components/zuno/input";
 import {
   Table,
   TableBody,
@@ -45,6 +45,7 @@ type Status =
   | "active"
   | "archived"
   | "published"
+  | "draft"
   | "superseded"
   | "pending"
   | "sent"
@@ -386,11 +387,15 @@ export default function LegalPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => void run(load)} variant="outline" className="h-12 gap-2">
+          <Button onClick={() => void run(load)} variant="outline" className="h-10 gap-2">
             <RefreshCw className="size-4" />
             Actualizar
           </Button>
-          <Button onClick={() => void run(legalLogout)} variant="outline" className="h-12 gap-2">
+          <Button onClick={() => void run(async () => {
+            await legalLogout();
+            router.replace("/");
+            router.refresh();
+          })} variant="outline" className="h-10 gap-2">
             <XCircle className="size-4" />
             Salir
           </Button>
@@ -405,7 +410,7 @@ export default function LegalPage() {
               type="button"
               variant={tab === id ? "default" : "ghost"}
               onClick={() => router.replace(`/legal?tab=${id}`, { scroll: false })}
-              className="h-12 rounded-md gap-2"
+              className="h-10 rounded-md gap-2"
             >
               <Icon className="size-4" />
               {label}
@@ -432,7 +437,7 @@ export default function LegalPage() {
               required
               maxLength={80}
               pattern="issuer_[a-z0-9]+(?:_[a-z0-9]+)*"
-              className="h-12"
+              className="h-10"
             />
             <Input
               name="name"
@@ -440,7 +445,7 @@ export default function LegalPage() {
               required
               minLength={2}
               maxLength={160}
-              className="h-12"
+              className="h-10"
             />
             <Input
               name="legalName"
@@ -448,21 +453,21 @@ export default function LegalPage() {
               required
               minLength={2}
               maxLength={200}
-              className="h-12"
+              className="h-10"
             />
             <Input
               name="type"
               placeholder="hemia"
               required
               pattern="hemia|customer|partner|white_label_brand|internal"
-              className="h-12"
+              className="h-10"
             />
             <Input
               name="taxId"
               placeholder="RFC / Tax ID"
               minLength={3}
               maxLength={80}
-              className="h-12"
+              className="h-10"
             />
             <Input
               name="countryCode"
@@ -471,7 +476,7 @@ export default function LegalPage() {
               minLength={2}
               maxLength={2}
               pattern="[A-Z]{2}"
-              className="h-12"
+              className="h-10"
             />
             <Input
               name="defaultLocale"
@@ -479,9 +484,9 @@ export default function LegalPage() {
               required
               maxLength={12}
               pattern="[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*"
-              className="h-12"
+              className="h-10"
             />
-            <Button className="h-12 gap-2">
+            <Button className="h-10 gap-2">
               <Plus className="size-4" />
               Crear
             </Button>
@@ -524,10 +529,10 @@ export default function LegalPage() {
               name="key"
               placeholder="app_loop_prod"
               required
-              className="h-12"
+              className="h-10"
             />
-            <Input name="name" placeholder="Loop" required className="h-12" />
-            <Button className="h-12 gap-2">
+            <Input name="name" placeholder="Loop" required className="h-10" />
+            <Button className="h-10 gap-2">
               <Plus className="size-4" />
               Crear
             </Button>
@@ -568,20 +573,20 @@ export default function LegalPage() {
               items={applications}
               label={(row) => row.name}
             />
-            <Input name="key" placeholder="terms" required className="h-12" />
+            <Input name="key" placeholder="terms" required className="h-10" />
             <Input
               name="locale"
               placeholder="es-MX"
               required
-              className="h-12"
+              className="h-10"
             />
             <Input
               name="title"
               placeholder="Terminos de servicio"
               required
-              className="h-12"
+              className="h-10"
             />
-            <Button className="h-12 gap-2">
+            <Button className="h-10 gap-2">
               <Plus className="size-4" />
               Crear
             </Button>
@@ -632,7 +637,7 @@ export default function LegalPage() {
               <Button
                 onClick={() => void run(saveDraft)}
                 disabled={!selectedDocumentId || !draftText}
-                className="h-12 gap-2"
+                className="h-10 gap-2"
               >
                 <Save className="size-4" />
                 Guardar draft
@@ -645,25 +650,25 @@ export default function LegalPage() {
                   name="version"
                   placeholder="1.0.0"
                   required
-                  className="h-12"
+                  className="h-10"
                 />
                 <Input
                   name="effectiveFrom"
                   type="datetime-local"
                   required
-                  className="h-12"
+                  className="h-10"
                 />
                 <Input
                   name="acceptanceDeadline"
                   type="datetime-local"
-                  className="h-12"
+                  className="h-10"
                 />
                 <Input
                   name="gracePeriodDays"
                   type="number"
                   min="0"
                   placeholder="3"
-                  className="h-12"
+                  className="h-10"
                 />
                 <SelectInput
                   name="acceptanceMode"
@@ -678,12 +683,12 @@ export default function LegalPage() {
                   label={(row) => row.name}
                 />
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Input name="role" placeholder="role" className="h-12" />
+                  <Input name="role" placeholder="role" className="h-10" />
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     disabled={!draft}
-                    className="h-12 gap-2"
+                    className="h-10 gap-2"
                     variant="outline"
                   >
                     <Rocket className="size-4" />
@@ -695,7 +700,7 @@ export default function LegalPage() {
                     onClick={(event) =>
                       void run(() => publishDraft(event.currentTarget.form!))
                     }
-                    className="h-12 gap-2"
+                    className="h-10 gap-2"
                   >
                     <Rocket className="size-4" />
                     Publicar
@@ -720,7 +725,7 @@ export default function LegalPage() {
                   </div>
                 )}
                 {publishMessage && (
-                  <p className="text-sm font-medium text-emerald-700">
+                  <p className="text-sm font-medium text-success">
                     {publishMessage}
                   </p>
                 )}
@@ -786,7 +791,7 @@ export default function LegalPage() {
               type="button"
               variant="outline"
               onClick={() => void run(() => downloadAcceptances("csv"))}
-              className="h-12 gap-2"
+              className="h-10 gap-2"
             >
               <Download className="size-4" />
               CSV
@@ -795,7 +800,7 @@ export default function LegalPage() {
               type="button"
               variant="outline"
               onClick={() => void run(() => downloadAcceptances("json"))}
-              className="h-12 gap-2"
+              className="h-10 gap-2"
             >
               <Download className="size-4" />
               JSON
@@ -899,7 +904,7 @@ export default function LegalPage() {
                           size="icon"
                           aria-label="Reintentar"
                           onClick={() => void run(() => retryNotification(notification.id))}
-                          className="size-12"
+                          className="size-10"
                         >
                           <RotateCcw className="size-4" />
                         </Button>
@@ -909,7 +914,7 @@ export default function LegalPage() {
                           size="icon"
                           aria-label="Cancelar"
                           onClick={() => void run(() => cancelNotification(notification.id))}
-                          className="size-12"
+                          className="size-10"
                         >
                           <XCircle className="size-4" />
                         </Button>
@@ -993,7 +998,7 @@ export default function LegalPage() {
                   ? `/legal/public/${documents.find((row) => row.id === selectedDocumentId)?.applicationId}/documents/${documents.find((row) => row.id === selectedDocumentId)?.key}?locale=${documents.find((row) => row.id === selectedDocumentId)?.locale}`
                   : ""
               }
-              className="h-12 md:col-span-2"
+              className="h-10 md:col-span-2"
             />
           </div>
         </Panel>
@@ -1069,16 +1074,18 @@ function StatusBadge({ status }: { status: Status }) {
   const variant =
     status === "active" || status === "sent" || status === "published"
       ? "success"
-      : status === "pending"
-        ? "warning"
+      : status === "draft"
+        ? "info"
+        : status === "pending"
+          ? "warning"
         : status === "failed" || status === "cancelled"
           ? "error"
           : "neutral";
 
   return (
-    <Badge variant={variant}>
+    <ToneBadge status={variant}>
       {status}
-    </Badge>
+    </ToneBadge>
   );
 }
 
@@ -1097,7 +1104,7 @@ function ArchiveButton({
       aria-label="Archivar"
       disabled={disabled}
       onClick={onClick}
-      className="size-12"
+      className="size-10"
     >
       <Archive className="size-4" />
     </Button>
@@ -1123,7 +1130,7 @@ function SelectInput<T extends { id: string }>({
       value={value}
       onChange={(event) => onChange?.(event.target.value)}
       required
-      className="h-12 rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring"
+      className="h-10 rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring"
     >
       <option value="">Selecciona...</option>
       {items.map((item) => (

@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import type { SsoConfig } from '@hemia/auth';
 import { SESSION_STORE, SsoModule } from '@hemia/auth/nestjs';
-import { RedisModule } from './redis.module';
-import { RedisSessionStore } from './redis-session-store';
+import { RedisModule } from './redis/redis.module';
+import { RedisSessionStore } from './redis/redis-session-store';
 
 @Module({
   imports: [

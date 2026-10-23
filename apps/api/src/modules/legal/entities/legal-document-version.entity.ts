@@ -1,3 +1,4 @@
+import { byteSizeTransformer } from './byte-size.transformer';
 import {
   Column,
   CreateDateColumn,
@@ -39,28 +40,63 @@ export class LegalDocumentVersion {
   @Column({ name: 'source_kind', type: 'varchar', length: 20, nullable: true })
   sourceKind: 'pdf' | 'html' | 'markdown' | null;
 
-  @Column({ name: 'source_content_type', type: 'varchar', length: 120, nullable: true })
+  @Column({
+    name: 'source_content_type',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
   sourceContentType: string | null;
 
-  @Column({ name: 'source_file_name', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'source_file_name',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   sourceFileName: string | null;
 
-  @Column({ name: 'source_size_bytes', type: 'bigint', nullable: true })
+  @Column({
+    name: 'source_size_bytes',
+    type: 'bigint',
+    nullable: true,
+    transformer: byteSizeTransformer,
+  })
   sourceSizeBytes: number | null;
 
   @Column({ name: 'source_hash', type: 'varchar', length: 64, nullable: true })
   sourceHash: string | null;
 
-  @Column({ name: 'source_s3_bucket', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'source_s3_bucket',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   sourceS3Bucket: string | null;
 
-  @Column({ name: 'source_s3_object_key', type: 'varchar', length: 1024, nullable: true })
+  @Column({
+    name: 'source_s3_object_key',
+    type: 'varchar',
+    length: 1024,
+    nullable: true,
+  })
   sourceS3ObjectKey: string | null;
 
-  @Column({ name: 'source_s3_version_id', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'source_s3_version_id',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   sourceS3VersionId: string | null;
 
-  @Column({ name: 'source_s3_etag', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'source_s3_etag',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   sourceS3Etag: string | null;
 
   @Column({ name: 'effective_from', type: 'timestamptz', nullable: true })

@@ -1,25 +1,27 @@
 import type { Metadata } from "next";
-import { Barlow_Condensed, Montserrat } from "next/font/google";
+import { Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 
-const sans = Montserrat({
-  variable: "--font-montserrat",
+const sans = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
-const display = Barlow_Condensed({
-  weight: "600",
-  variable: "--font-barlow-condensed",
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
   subsets: ["latin"],
 });
 
-const themeScript = `try{document.documentElement.classList.toggle("dark",localStorage.getItem("theme")==="dark")}catch{}`;
+const themeScript = `try{var theme=(localStorage.getItem("legal-theme")??localStorage.getItem("theme"));document.documentElement.classList.remove("light","dark");document.documentElement.classList.add(theme==="dark"?"dark":"light")}catch{}`;
 
 export const metadata: Metadata = {
-  title: "Hemia Legal",
+  title: {
+    default: "Hemia Legal",
+    template: "%s | Hemia Legal",
+  },
   description: "Workspace de documentación B2B",
   icons: {
-    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+    icon: [{ url: "/favicon.png", type: "image/png", sizes: "32x32" }],
   },
 };
 
@@ -32,7 +34,7 @@ export default function RootLayout({
     <html
       lang="es"
       suppressHydrationWarning
-      className={`${sans.variable} ${display.variable} h-full antialiased`}
+      className={`${sans.variable} ${geistMono.variable} light h-full antialiased`}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />

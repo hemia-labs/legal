@@ -1,8 +1,12 @@
+import { LegalConsumerAccessService } from '../authorization/legal-consumer-access.service';
+import { In } from 'typeorm';
+import { scopedId } from '../authorization/legal-scope';
 import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -27,6 +31,7 @@ import {
   CreateApplicationDto,
   CreateDocumentDto,
   CreateIssuerDto,
+  DocumentAuditFilterDto,
   DocumentFilterDto,
   EvaluatePendingDto,
   IssuerFilterDto,
@@ -50,16 +55,20 @@ import { LegalPublicationAsset } from '../entities/legal-publication-asset.entit
 import { OutboxEvent } from '../entities/outbox-event.entity';
 import { S3StorageService } from '../../storage/s3-storage.service';
 import { buildPublicationSourceKey } from '../../storage/types/storage.types';
+import type { StorageObjectRef } from '../../storage/types/storage.types';
 import {
   documentPolicy,
   LEGAL_DOCUMENT_TYPES,
   type LegalDocumentVariant,
 } from '../constants/document-types';
 import { LegalMapper } from '../mappers/legal.mapper';
-import { AccessService } from './access.service';
+import { AccessService } from '../event-bus/access.service';
 import { requireLegalClearance } from '../helpers/legal-precondition.helper';
 import {
   analyzeLegalSource,
+  extractHtmlSections,
+  renderMarkdown,
+  sanitizeHtml,
 } from '../helpers/legal-source.helper';
 import type { LegalSourceUpload } from '../types/legal-source.types';
 
@@ -78,6 +87,7 @@ type PendingDocument = {
 
 @Injectable()
 export class LegalService {
+  private readonly logger = new Logger(LegalService.name);
   constructor(
     @InjectRepository(LegalIssuer)
     private readonly issuers: Repository<LegalIssuer>,
@@ -104,12 +114,15 @@ export class LegalService {
     private readonly dataSource: DataSource,
     private readonly access: AccessService,
     private readonly storage: S3StorageService,
+    private readonly consumers: LegalConsumerAccessService,
   ) {}
 
-  async listIssuers(filter: IssuerFilterDto) {
+  async listIssuers(filter: IssuerFilterDto, actor: LegalActor) {
     const page = filter.page ?? 1;
     const limit = filter.limit ?? 10;
-    const base: FindOptionsWhere<LegalIssuer> = {};
+    const base: FindOptionsWhere<LegalIssuer> = {
+      id: scopedId(actor.authorization, 'legal.issuers.view', 'issuers'),
+    };
     if (filter.type) base.type = filter.type;
     base.status = filter.status ?? 'active';
     if (filter.countryCode) base.countryCode = filter.countryCode;
@@ -141,8 +154,16 @@ export class LegalService {
     };
   }
 
-  async listIssuerOptions() {
+  async listIssuerOptions(actor: LegalActor) {
     const issuers = await this.issuers.find({
+      where: {
+        id: scopedId(
+          actor.authorization,
+          'legal.issuers.view',
+          'issuers',
+          true,
+        ),
+      },
       select: { id: true, name: true, status: true },
       order: { name: 'ASC', id: 'ASC' },
     });
@@ -247,10 +268,16 @@ export class LegalService {
     });
   }
 
-  async listApplications(filter: ApplicationFilterDto) {
+  async listApplications(filter: ApplicationFilterDto, actor: LegalActor) {
     const page = filter.page ?? 1;
     const limit = filter.limit ?? 10;
-    const base: FindOptionsWhere<LegalApplication> = {};
+    const base: FindOptionsWhere<LegalApplication> = {
+      id: scopedId(
+        actor.authorization,
+        'legal.applications.view',
+        'applications',
+      ),
+    };
     if (filter.status && filter.status !== 'all') base.status = filter.status;
     if (filter.issuerId) base.issuerId = filter.issuerId;
 
@@ -270,7 +297,9 @@ export class LegalService {
     });
 
     return {
-      items: applications.map((application) => LegalMapper.application(application)),
+      items: applications.map((application) =>
+        LegalMapper.application(application),
+      ),
       meta: {
         page,
         limit,
@@ -307,23 +336,8 @@ export class LegalService {
     actor: LegalActor,
   ) {
     const application = await this.activeApplication(id);
-    if (dto.issuerId && dto.issuerId !== application.issuerId) {
-      await this.activeIssuer(dto.issuerId);
-      if (await this.documents.existsBy({ applicationId: id })) {
-        throw new ConflictException(
-          'Application issuer cannot change after documents are created',
-        );
-      }
-      if (
-        await this.applications.existsBy({
-          issuerId: dto.issuerId,
-          key: application.key,
-        })
-      ) {
-        throw new ConflictException('Application key already exists for issuer');
-      }
-      application.issuerId = dto.issuerId;
-    }
+    if (dto.issuerId && dto.issuerId !== application.issuerId)
+      throw new ForbiddenException('Resource reparenting is not supported');
     if (dto.name !== undefined) application.name = dto.name;
     const saved = await this.applications.save(application);
     await this.audit(actor, 'legal.application.edit', 'legal_application', id, {
@@ -402,17 +416,28 @@ export class LegalService {
     );
   }
 
-  async listDocuments(filter: DocumentFilterDto) {
+  async listDocuments(filter: DocumentFilterDto, actor: LegalActor) {
     const documents = await this.documents.find({
       where: {
+        id: scopedId(actor.authorization, 'legal.documents.view', 'documents'),
         ...(filter.issuerId ? { issuerId: filter.issuerId } : {}),
         ...(filter.applicationId
           ? { applicationId: filter.applicationId }
           : {}),
       },
+      relations: { issuer: true, application: true },
       order: { createdAt: 'DESC' },
     });
     return documents.map((document) => LegalMapper.document(document));
+  }
+
+  async getDocument(id: string) {
+    const document = await this.documents.findOne({
+      where: { id },
+      relations: { issuer: true, application: true },
+    });
+    if (!document) throw new NotFoundException('Document not found');
+    return LegalMapper.document(document);
   }
 
   listDocumentTypes() {
@@ -424,7 +449,8 @@ export class LegalService {
     const policy = documentPolicy(documentType);
     if (!policy) throw new BadRequestException('Invalid document type');
 
-    const documentVariant = dto.documentVariant ??
+    const documentVariant =
+      dto.documentVariant ??
       (documentType === 'privacy_notice' ? 'integral' : 'standard');
     const parentDocumentId = dto.parentDocumentId ?? null;
     await this.validateDocumentVariant(
@@ -481,6 +507,15 @@ export class LegalService {
 
   async updateDocument(id: string, dto: UpdateDocumentDto, actor: LegalActor) {
     const document = await this.activeDocument(id);
+    const update = dto as UpdateDocumentDto & {
+      issuerId?: string;
+      applicationId?: string;
+    };
+    if (
+      (update.issuerId && update.issuerId !== document.issuerId) ||
+      (update.applicationId && update.applicationId !== document.applicationId)
+    )
+      throw new ForbiddenException('Resource reparenting is not supported');
     Object.assign(document, dto);
     const saved = await this.documents.save(document);
     await this.audit(actor, 'legal.document.edit', 'legal_document', id, {
@@ -502,11 +537,34 @@ export class LegalService {
 
   async deleteDocument(id: string, actor: LegalActor) {
     const document = await this.documentById(id);
+    const publications = await this.publications.find({
+      where: { documentId: id },
+    });
+    if (
+      publications.some((publication) =>
+        ['pending', 'uploading'].includes(publication.status),
+      )
+    ) {
+      throw new ConflictException(
+        'Espera a que termine la publicación antes de eliminar el documento.',
+      );
+    }
     await this.documents.softRemove(document);
     await this.audit(actor, 'legal.document.delete', 'legal_document', id, {
       issuerId: document.issuerId,
       applicationId: document.applicationId,
     });
+    let storageDeleted = false;
+    try {
+      storageDeleted = await this.storage.deleteDocumentFiles(id);
+    } catch (error) {
+      this.logger.warn(
+        `S3 cleanup failed for document ${id}: ${error instanceof Error ? error.name : 'UnknownError'}`,
+      );
+    }
+    if (!storageDeleted)
+      this.logger.warn(`S3 cleanup is incomplete for document ${id}`);
+    return { storageDeleted };
   }
 
   async getDraft(documentId: string) {
@@ -537,6 +595,136 @@ export class LegalService {
     });
     if (!publication) throw new NotFoundException('Publication not found');
     return LegalMapper.publication(publication);
+  }
+
+  async getVersionContent(documentId: string, versionId: string) {
+    await this.documentById(documentId);
+    const version = await this.versions.findOneBy({
+      id: versionId,
+      documentId,
+    });
+    if (!version) throw new NotFoundException('Version not found');
+
+    const meta = {
+      versionId: version.id,
+      version: version.version,
+      status: version.status,
+      sourceKind: version.sourceKind,
+      fileName: version.sourceFileName,
+      sizeBytes: version.sourceSizeBytes,
+      contentHash: version.contentHash,
+    };
+
+    if (version.status === 'draft') {
+      return {
+        ...meta,
+        ...(await this.renderSource(
+          this.versionSourceRef(version),
+          version.sourceKind,
+        )),
+      };
+    }
+
+    const publication = await this.publications.findOne({
+      where: {
+        documentVersionId: version.id,
+        status: In(['published', 'superseded']),
+      },
+      order: { publishedAt: 'DESC' },
+    });
+    if (!publication)
+      throw new NotFoundException('Published content not found');
+
+    const assets = await this.publicationAssets.find({
+      where: { publicationId: publication.id },
+    });
+    const htmlAsset = assets.find((asset) => asset.kind === 'html');
+    if (htmlAsset) {
+      const body = await this.storage.read(this.assetRef(htmlAsset));
+      return {
+        ...meta,
+        ...extractHtmlSections(body.toString('utf8')),
+        mode: 'html' as const,
+        url: null,
+        expiresAt: null,
+      };
+    }
+
+    const sourceAsset = assets.find((asset) => asset.kind === 'source');
+    if (sourceAsset) {
+      return {
+        ...meta,
+        ...(await this.renderSource(
+          this.assetRef(sourceAsset),
+          version.sourceKind,
+        )),
+      };
+    }
+
+    return {
+      ...meta,
+      ...(await this.renderSource(
+        this.versionSourceRef(version),
+        version.sourceKind,
+      )),
+    };
+  }
+
+  private assetRef(asset: LegalPublicationAsset): StorageObjectRef {
+    return {
+      bucket: asset.s3Bucket,
+      key: asset.s3ObjectKey,
+      versionId: asset.s3VersionId,
+      etag: null,
+      contentType: asset.contentType,
+      size: asset.sizeBytes,
+      sha256: asset.sha256,
+    };
+  }
+
+  private versionSourceRef(version: LegalDocumentVersion): StorageObjectRef {
+    if (
+      !version.sourceS3Bucket ||
+      !version.sourceS3ObjectKey ||
+      !version.sourceContentType
+    ) {
+      throw new NotFoundException('Content not available for this version');
+    }
+    return {
+      bucket: version.sourceS3Bucket,
+      key: version.sourceS3ObjectKey,
+      versionId: version.sourceS3VersionId,
+      etag: version.sourceS3Etag,
+      contentType: version.sourceContentType,
+      size: version.sourceSizeBytes ?? 0,
+      sha256: version.sourceHash ?? '',
+    };
+  }
+
+  private async renderSource(
+    ref: StorageObjectRef,
+    kind: LegalDocumentVersion['sourceKind'],
+  ) {
+    if (kind === 'pdf' || ref.contentType === 'application/pdf') {
+      const signed = await this.storage.signedDownloadUrl(ref);
+      return {
+        mode: 'pdf' as const,
+        html: null,
+        url: signed.url,
+        expiresAt: signed.expiresAt,
+        sections: [],
+      };
+    }
+
+    const source = (await this.storage.read(ref)).toString('utf8');
+    const html =
+      kind === 'markdown' ? renderMarkdown(source) : sanitizeHtml(source);
+    return {
+      ...extractHtmlSections(html),
+      mode: 'html' as const,
+      url: null,
+      expiresAt: null,
+    };
   }
 
   async retryPublication(
@@ -600,7 +788,10 @@ export class LegalService {
       saved.id,
       { issuerId: saved.issuerId, applicationId: saved.applicationId },
     );
-    return { publication: LegalMapper.publication(saved), outboxEventId: event.id };
+    return {
+      publication: LegalMapper.publication(saved),
+      outboxEventId: event.id,
+    };
   }
 
   async createDraft(
@@ -777,7 +968,8 @@ export class LegalService {
         throw new ConflictException('Draft has no uploaded source');
       }
       const contentHash = draft.contentHash;
-      if (!contentHash) throw new ConflictException('Draft has no consumable content');
+      if (!contentHash)
+        throw new ConflictException('Draft has no consumable content');
       const snapshot = await versions.save(
         versions.create({
           documentId,
@@ -825,7 +1017,10 @@ export class LegalService {
             ? new Date(dto.acceptanceDeadline)
             : null,
           gracePeriodDays: dto.gracePeriodDays ?? 0,
-          rulesSnapshot: (dto.rules ?? []) as unknown as Record<string, unknown>[],
+          rulesSnapshot: (dto.rules ?? []) as unknown as Record<
+            string,
+            unknown
+          >[],
           contentHash,
           sourceKind: draft.sourceKind,
           sourceHash: draft.sourceHash,
@@ -939,7 +1134,9 @@ export class LegalService {
     }
 
     if (documentVariant === 'integral' && parentDocumentId) {
-      throw new BadRequestException('Integral privacy notice cannot have a parent');
+      throw new BadRequestException(
+        'Integral privacy notice cannot have a parent',
+      );
     }
     if (documentVariant === 'integral') return;
     if (!parentDocumentId) {
@@ -963,12 +1160,12 @@ export class LegalService {
   }
 
   async getMyPending(query: MePendingQueryDto, request: LegalRequest) {
-    const context = request.legalContext;
-    if (!context) throw new ConflictException('Legal organization context required');
+    const context = request.personalContext;
+    if (!context)
+      throw new ConflictException('Legal organization context required');
     return this.evaluatePending({
       ...query,
       organizationId: context.organizationId,
-      productTenantId: context.productTenantId,
       identityIssuer: request.actor.identityIssuer,
       subjectId: request.actor.subjectId,
       roles: this.access.rolesFromRequest(request),
@@ -982,9 +1179,11 @@ export class LegalService {
   }
 
   async evaluatePending(dto: EvaluatePendingDto) {
-    if (dto.productTenantId && !dto.organizationId) {
-      throw new BadRequestException('productTenantId requires organizationId');
-    }
+    if (!dto.organizationId)
+      throw new BadRequestException('organizationId is required');
+    const application = await this.activeApplication(dto.applicationId);
+    if (application.issuerId !== dto.issuerId)
+      throw new ForbiddenException('Application does not belong to issuer');
 
     const rules = await this.dataSource
       .getRepository(LegalAcceptanceRule)
@@ -998,8 +1197,6 @@ export class LegalService {
     const now = Date.now();
     const candidates = rules.filter((rule) => {
       if (!matchesContext(rule.organizationId, dto.organizationId))
-        return false;
-      if (!matchesContext(rule.productTenantId, dto.productTenantId))
         return false;
       if (rule.role && !(dto.roles ?? []).includes(rule.role)) return false;
       if (rule.startsAt && rule.startsAt.getTime() > now) return false;
@@ -1050,12 +1247,12 @@ export class LegalService {
 
   async createAcceptance(dto: CreateAcceptanceDto, request: LegalRequest) {
     if (!dto.accepted) throw new BadRequestException('accepted must be true');
-    const context = request.legalContext;
-    if (!context) throw new ConflictException('Legal organization context required');
+    const context = request.personalContext;
+    if (!context)
+      throw new ConflictException('Legal organization context required');
     const trustedDto = {
       ...dto,
       organizationId: context.organizationId,
-      productTenantId: context.productTenantId,
     };
 
     return this.dataSource.transaction(async (manager) => {
@@ -1082,15 +1279,33 @@ export class LegalService {
       const document = await documents.findOneBy({ id: rule.documentId });
       if (!document) throw new NotFoundException('Document not found');
       if (trustedDto.locale && document.locale !== trustedDto.locale) {
-        throw new ConflictException('Acceptance locale does not match document');
+        throw new ConflictException(
+          'Acceptance locale does not match document',
+        );
       }
       ensureAcceptanceContext(rule, trustedDto);
 
       const roles = this.access.rolesFromRequest(request);
       if (rule.acceptanceMode === 'organization_representative') {
+        if (!rule.role)
+          throw new ForbiddenException(
+            'Representative rule requires an explicit organization role',
+          );
         this.access.ensureRole(rule.role, roles);
       }
 
+      await manager.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+        [
+          JSON.stringify([
+            request.actor.identityIssuer,
+            request.actor.subjectId,
+            trustedDto.organizationId,
+            version.id,
+            rule.id,
+          ]),
+        ],
+      );
       const existing = await findAcceptance(
         acceptances,
         request.actor.identityIssuer,
@@ -1098,7 +1313,6 @@ export class LegalService {
         version.id,
         rule.id,
         trustedDto.organizationId,
-        trustedDto.productTenantId,
       );
       if (existing) return LegalMapper.acceptance(existing);
 
@@ -1106,7 +1320,7 @@ export class LegalService {
         issuerId: rule.issuerId,
         applicationId: rule.applicationId,
         organizationId: trustedDto.organizationId,
-        productTenantId: trustedDto.productTenantId,
+        productTenantId: null,
         identityIssuer: request.actor.identityIssuer,
         subjectId: request.actor.subjectId,
         documentId: rule.documentId,
@@ -1143,7 +1357,6 @@ export class LegalService {
             version.id,
             rule.id,
             trustedDto.organizationId,
-            trustedDto.productTenantId,
           );
           if (duplicate) return LegalMapper.acceptance(duplicate);
         }
@@ -1174,35 +1387,68 @@ export class LegalService {
   }
 
   async listMyAcceptances(request: LegalRequest) {
+    if (!request.personalContext?.applicationIds?.length)
+      throw new ForbiddenException('Personal context required');
     const rows = await this.acceptances.find({
       where: {
         identityIssuer: request.actor.identityIssuer,
         subjectId: request.actor.subjectId,
-        ...(request.legalContext
-          ? { productTenantId: request.legalContext.productTenantId }
-          : {}),
+        organizationId: request.personalContext.organizationId,
+        applicationId: In(request.personalContext.applicationIds),
       },
       order: { createdAt: 'DESC' },
     });
     return rows.map((row) => LegalMapper.acceptance(row));
   }
 
-  async getAcceptance(id: string, actor: LegalActor) {
-    const acceptance = await this.acceptances.findOneBy({ id });
-    if (!acceptance) throw new NotFoundException('Acceptance not found');
-    if (
-      actor.actorType !== 'service' &&
-      (acceptance.identityIssuer !== actor.identityIssuer ||
-        acceptance.subjectId !== actor.subjectId)
-    ) {
-      throw new ForbiddenException('Acceptance belongs to another identity');
+  private async acceptanceOrganizations(rows: LegalAcceptance[]) {
+    await this.consumers.organizations(
+      rows
+        .filter((row) => !row.externalIdentitySourceId)
+        .map((row) => row.organizationId),
+    );
+    for (const row of rows.filter((row) => row.externalIdentitySourceId)) {
+      const found: unknown[] = await this.dataSource.query(
+        `SELECT s.id FROM external_identity_sources s JOIN external_identity_source_clients c ON c.source_id=s.id WHERE s.id=$1 AND s.issuer_id=$2 AND s.application_id=$3 AND s.identity_issuer=$4 AND c.id=$5`,
+        [
+          row.externalIdentitySourceId,
+          row.issuerId,
+          row.applicationId,
+          row.identityIssuer,
+          row.registeringClientId,
+        ],
+      );
+      if (found.length !== 1)
+        throw new ForbiddenException(
+          'Unverifiable external acceptance provenance',
+        );
     }
+  }
+  async getAcceptance(id: string, actor: LegalActor) {
+    const acceptance = await this.acceptances
+      .createQueryBuilder('a')
+      .where({
+        id: scopedId(
+          actor.authorization,
+          'legal.acceptances.view',
+          'acceptances',
+        ),
+      })
+      .andWhere('a.id = :id', { id })
+      .getOne();
+    if (!acceptance) throw new NotFoundException('Acceptance not found');
+    await this.acceptanceOrganizations([acceptance]);
     return LegalMapper.acceptance(acceptance);
   }
 
-  async listNotifications(filter: NotificationFilterDto) {
+  async listNotifications(filter: NotificationFilterDto, actor: LegalActor) {
     const rows = await this.notifications.find({
       where: {
+        id: scopedId(
+          actor.authorization,
+          'legal.notifications.view',
+          'notifications',
+        ),
         ...(filter.issuerId ? { issuerId: filter.issuerId } : {}),
         ...(filter.applicationId
           ? { applicationId: filter.applicationId }
@@ -1212,6 +1458,7 @@ export class LegalService {
       order: { createdAt: 'DESC' },
       take: 100,
     });
+    await this.consumers.organizations(rows.map((row) => row.organizationId));
     return rows.map((row) => LegalMapper.notification(row));
   }
 
@@ -1258,9 +1505,10 @@ export class LegalService {
     return LegalMapper.notification(saved);
   }
 
-  async listAuditEvents(filter: AuditEventFilterDto) {
+  async listAuditEvents(filter: AuditEventFilterDto, actor: LegalActor) {
     const rows = await this.auditEvents.find({
       where: {
+        id: scopedId(actor.authorization, 'legal.audit.view', 'audit_events'),
         ...(filter.issuerId ? { issuerId: filter.issuerId } : {}),
         ...(filter.applicationId
           ? { applicationId: filter.applicationId }
@@ -1269,7 +1517,119 @@ export class LegalService {
       order: { createdAt: 'DESC' },
       take: 100,
     });
-    return rows.map((row) => LegalMapper.auditEvent(row));
+    const acceptanceIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.entityType === 'legal_acceptance')
+          .map((row) => row.entityId),
+      ),
+    ];
+    const notificationIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.entityType === 'legal_notification')
+          .map((row) => row.entityId),
+      ),
+    ];
+    const provenance: { organization_id: string | null }[] =
+      await this.dataSource.query(
+        'SELECT organization_id FROM acceptances WHERE id=ANY($1::uuid[]) UNION ALL SELECT organization_id FROM notifications WHERE id=ANY($2::uuid[])',
+        [acceptanceIds, notificationIds],
+      );
+    if (provenance.length !== acceptanceIds.length + notificationIds.length)
+      throw new ForbiddenException('Unverifiable audit provenance');
+    await this.consumers.organizations(
+      provenance.map((row) => row.organization_id),
+    );
+    return rows.map((row) =>
+      LegalMapper.auditEvent(
+        [
+          'legal_issuer',
+          'legal_application',
+          'legal_document',
+          'legal_document_version',
+          'legal_publication',
+        ].includes(row.entityType)
+          ? { ...row, metadata: {} }
+          : row,
+      ),
+    );
+  }
+
+  async listDocumentAcceptances(documentId: string, actor: LegalActor) {
+    await this.documentById(documentId);
+    const [rows, total] = await this.acceptances.findAndCount({
+      where: {
+        id: scopedId(
+          actor.authorization,
+          'legal.acceptances.view',
+          'acceptances',
+        ),
+        documentId,
+      },
+      order: { acceptedAt: 'DESC', createdAt: 'DESC' },
+      take: 200,
+    });
+    return { total, items: rows.map((row) => LegalMapper.acceptance(row)) };
+  }
+
+  async listDocumentAuditEvents(
+    documentId: string,
+    filter: DocumentAuditFilterDto,
+    actor: LegalActor,
+  ) {
+    await this.documentById(documentId);
+    const [versions, publications, acceptances] = await Promise.all([
+      this.versions.find({ where: { documentId }, select: { id: true } }),
+      this.publications.find({ where: { documentId }, select: { id: true } }),
+      this.acceptances.find({ where: { documentId }, select: { id: true } }),
+    ]);
+    const scope = () =>
+      scopedId(actor.authorization, 'legal.audit.view', 'audit_events');
+    const where: FindOptionsWhere<AuditEvent>[] = [
+      { id: scope(), entityType: 'legal_document', entityId: documentId },
+    ];
+    const versionIds = versions.map((row) => row.id);
+    const publicationIds = publications.map((row) => row.id);
+    const acceptanceIds = acceptances.map((row) => row.id);
+    if (versionIds.length) {
+      where.push({
+        id: scope(),
+        entityType: 'legal_document_version',
+        entityId: In(versionIds),
+      });
+    }
+    if (publicationIds.length) {
+      where.push({
+        id: scope(),
+        entityType: 'legal_publication',
+        entityId: In(publicationIds),
+      });
+    }
+    if (acceptanceIds.length) {
+      where.push({
+        id: scope(),
+        entityType: 'legal_acceptance',
+        entityId: In(acceptanceIds),
+      });
+    }
+
+    const page = filter.page ?? 1;
+    const limit = filter.limit ?? 20;
+    const [rows, total] = await this.auditEvents.findAndCount({
+      where,
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return {
+      total,
+      page,
+      limit,
+      items: rows.map((row) =>
+        LegalMapper.auditEvent({ ...row, metadata: {} }),
+      ),
+    };
   }
 
   async exportAcceptances(
@@ -1278,6 +1638,11 @@ export class LegalService {
   ) {
     const rows = await this.acceptances.find({
       where: {
+        id: scopedId(
+          actor.authorization,
+          'legal.acceptances.export',
+          'acceptances',
+        ),
         ...(filter.issuerId ? { issuerId: filter.issuerId } : {}),
         ...(filter.applicationId
           ? { applicationId: filter.applicationId }
@@ -1287,8 +1652,9 @@ export class LegalService {
       take: 1000,
     });
 
-    const issuerId = filter.issuerId ?? rows[0]?.issuerId;
-    const applicationId = filter.applicationId ?? rows[0]?.applicationId;
+    await this.acceptanceOrganizations(rows);
+    const issuerId = filter.issuerId;
+    const applicationId = filter.applicationId;
     const audit = await this.auditEvents.save(
       this.auditEvents.create({
         issuerId: issuerId ?? null,
@@ -1366,15 +1732,13 @@ export class LegalService {
     const publication = await this.publications.findOne({
       where: { documentVersionId: published.id, status: 'published' },
     });
-    if (!publication) throw new NotFoundException('Published storage not found');
+    if (!publication)
+      throw new NotFoundException('Published storage not found');
 
     const assets = await this.publicationAssets.find({
       where: { publicationId: publication.id },
     });
-    if (
-      policy.requiresHtml &&
-      !assets.some((asset) => asset.kind === 'html')
-    ) {
+    if (policy.requiresHtml && !assets.some((asset) => asset.kind === 'html')) {
       throw new NotFoundException('Published HTML artifact not found');
     }
     const rules = await this.rules.find({
@@ -1385,18 +1749,22 @@ export class LegalService {
       },
     });
     const artifactEntries = await Promise.all(
-      assets
-        .filter((asset) => asset.kind !== 'source')
-        .map(async (asset) => {
-        const signed = await this.storage.signedDownloadUrl({
-          bucket: asset.s3Bucket,
-          key: asset.s3ObjectKey,
-          versionId: asset.s3VersionId,
-          etag: null,
-          contentType: asset.contentType,
-          size: asset.sizeBytes,
-          sha256: asset.sha256,
-        });
+      assets.map(async (asset) => {
+        const signed = await this.storage.signedDownloadUrl(
+          {
+            bucket: asset.s3Bucket,
+            key: asset.s3ObjectKey,
+            versionId: asset.s3VersionId,
+            etag: null,
+            contentType: asset.contentType,
+            size: asset.sizeBytes,
+            sha256: asset.sha256,
+          },
+          asset.kind === 'source'
+            ? published.sourceFileName ||
+                `source.${published.sourceKind === 'markdown' ? 'md' : published.sourceKind || 'html'}`
+            : undefined,
+        );
         return [
           asset.kind,
           {
@@ -1416,11 +1784,12 @@ export class LegalService {
       integralVersion: string;
     } | null = null;
     if (document.documentType === 'privacy_notice') {
-      const integral = document.documentVariant === 'integral'
-        ? document
-        : document.parentDocumentId
-          ? await this.documents.findOneBy({ id: document.parentDocumentId })
-          : null;
+      const integral =
+        document.documentVariant === 'integral'
+          ? document
+          : document.parentDocumentId
+            ? await this.documents.findOneBy({ id: document.parentDocumentId })
+            : null;
       const integralVersion = integral
         ? document.documentVariant === 'integral'
           ? published
@@ -1455,9 +1824,7 @@ export class LegalService {
       },
       contentHash: published.contentHash,
       acceptance: {
-        required: rules.some(
-          (rule) => rule.acceptanceMode !== 'informational',
-        ),
+        required: rules.some((rule) => rule.acceptanceMode !== 'informational'),
         blocking: rules.some((rule) => rule.isBlocking),
         rules: rules.map((rule) => ({
           acceptanceMode: rule.acceptanceMode,
@@ -1551,7 +1918,8 @@ export class LegalService {
       conflicts.push('Version already exists');
     }
     const rules = dto.rules ?? [];
-    const resolvedDocument = document ?? (await this.documents.findOneBy({ id: documentId }));
+    const resolvedDocument =
+      document ?? (await this.documents.findOneBy({ id: documentId }));
     if (resolvedDocument) {
       const policy = documentPolicy(resolvedDocument.documentType);
       if (!policy) conflicts.push('Invalid document type');
@@ -1560,24 +1928,39 @@ export class LegalService {
         version: 'draft',
         status: 'draft',
       });
-      if (draft && (!draft.sourceKind || !policy?.allowedSourceKinds.includes(draft.sourceKind))) {
-        conflicts.push('Draft source format is not allowed for this document type');
+      if (
+        draft &&
+        (!draft.sourceKind ||
+          !policy?.allowedSourceKinds.includes(draft.sourceKind))
+      ) {
+        conflicts.push(
+          'Draft source format is not allowed for this document type',
+        );
       }
-      if (draft && policy?.requiresHtml && draft.sourceKind !== 'html' && draft.sourceKind !== 'markdown') {
+      if (
+        draft &&
+        policy?.requiresHtml &&
+        draft.sourceKind !== 'html' &&
+        draft.sourceKind !== 'markdown'
+      ) {
         conflicts.push('Public documents require an HTML-compatible source');
       }
       if (policy?.acceptance === 'required' && rules.length === 0) {
         conflicts.push('At least one acceptance rule is required');
       }
       if (policy?.acceptance === 'optional' && rules.length > 0) {
-        conflicts.push('Acceptance rules are not allowed for this document type');
+        conflicts.push(
+          'Acceptance rules are not allowed for this document type',
+        );
       }
       if (
         resolvedDocument.documentType === 'privacy_notice' &&
         resolvedDocument.documentVariant !== 'integral'
       ) {
         const parent = resolvedDocument.parentDocumentId
-          ? await this.documents.findOneBy({ id: resolvedDocument.parentDocumentId })
+          ? await this.documents.findOneBy({
+              id: resolvedDocument.parentDocumentId,
+            })
           : null;
         const integralVersion = parent
           ? await this.versions.findOneBy({
@@ -1620,7 +2003,6 @@ export class LegalService {
       version.id,
       rule.id,
       dto.organizationId,
-      dto.productTenantId,
     );
   }
 
@@ -1679,12 +2061,9 @@ function hasOverlappingRules(rules: AcceptanceRuleInputDto[]) {
 }
 
 function ruleKey(rule: AcceptanceRuleInputDto) {
-  return [
-    rule.acceptanceMode,
-    rule.organizationId ?? '',
-    rule.productTenantId ?? '',
-    rule.role ?? '',
-  ].join('|');
+  return [rule.acceptanceMode, rule.organizationId ?? '', rule.role ?? ''].join(
+    '|',
+  );
 }
 
 function periodsOverlap(
@@ -1714,11 +2093,7 @@ function bestRuleByDocument(rules: LegalAcceptanceRule[]) {
 }
 
 function specificity(rule: LegalAcceptanceRule) {
-  return (
-    Number(!!rule.organizationId) +
-    Number(!!rule.productTenantId) +
-    Number(!!rule.role)
-  );
+  return Number(!!rule.organizationId) + Number(!!rule.role);
 }
 
 function ensureAcceptanceContext(
@@ -1727,9 +2102,6 @@ function ensureAcceptanceContext(
 ) {
   if (!matchesContext(rule.organizationId, dto.organizationId)) {
     throw new ConflictException('Organization does not match rule');
-  }
-  if (!matchesContext(rule.productTenantId, dto.productTenantId)) {
-    throw new ConflictException('Product tenant does not match rule');
   }
 }
 
@@ -1752,27 +2124,21 @@ async function findAcceptance(
   documentVersionId: string,
   acceptanceRuleId: string,
   organizationId?: string,
-  productTenantId?: string,
 ) {
   const rows = await acceptances.find({
     where: { identityIssuer, subjectId, documentVersionId, acceptanceRuleId },
   });
   return (
-    rows.find(
-      (row) =>
-        row.organizationId === (organizationId ?? null) &&
-        row.productTenantId === (productTenantId ?? null),
-    ) ?? null
+    rows.find((row) => row.organizationId === (organizationId ?? null)) ?? null
   );
 }
 
-function toCsv(rows: Record<string, unknown>[]) {
+function toCsv(rows: ReturnType<typeof LegalMapper.acceptance>[]) {
   const headers = [
     'id',
     'issuerId',
     'applicationId',
     'organizationId',
-    'productTenantId',
     'identityIssuer',
     'subjectId',
     'documentId',
@@ -1781,7 +2147,7 @@ function toCsv(rows: Record<string, unknown>[]) {
     'acceptanceMode',
     'contentHash',
     'acceptedAt',
-  ];
+  ] as const;
   return [
     headers.join(','),
     ...rows.map((row) =>
@@ -1790,7 +2156,7 @@ function toCsv(rows: Record<string, unknown>[]) {
   ].join('\n');
 }
 
-function csvCell(value: unknown) {
+function csvCell(value: string | Date | null | undefined) {
   const text =
     value instanceof Date
       ? value.toISOString()

@@ -22,30 +22,28 @@ import {
   LoaderCircle,
   Pencil,
   Funnel,
-  MoreHorizontal,
   Plus,
   RefreshCw,
-  RotateCcw,
   Scale,
   Search,
   Trash2,
-  X,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/zuno/alert";
+import { Card, CardContent, CardFooter } from "@/components/zuno/card";
+import { Badge } from "@/components/zuno/badge";
+import { StatusBadge } from "@/components/zuno/status-badge";
+import { Button } from "@/components/zuno/button";
+import { PageHeading } from "@/components/page-heading";
 import { ActionMenu } from "@/components/action-menu";
-import { Input } from "@/components/ui/input";
+import { Input } from "@/components/zuno/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@/components/zuno/dropdown-menu";
+import { Skeleton } from "@/components/zuno/skeleton";
 import {
   DataTable,
   type DataTableColumn,
@@ -54,7 +52,6 @@ import {
   Pagination,
   PaginationContent,
   PaginationItem,
-  PaginationLink,
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
@@ -89,7 +86,7 @@ export default function IssuersPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("active");
+  const [statusFilter, setStatusFilter] = useState<IssuerFilterStatus>("active");
   const [typeFilter, setTypeFilter] = useState("all");
   const [meta, setMeta] = useState<IssuerListResponse["meta"]>({
     page: 1,
@@ -124,7 +121,7 @@ export default function IssuersPage() {
         page: requestedPage,
         limit: PAGE_SIZE,
         search: query,
-        status: statusFilter as IssuerFilterStatus,
+        status: statusFilter,
         type: typeFilter,
       });
       if (version !== requestVersion.current) return;
@@ -161,14 +158,10 @@ export default function IssuersPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-        <div>
-          <h1 className="text-2xl font-bold text-heading">Emisores legales</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Administra las entidades y marcas responsables de los documentos legales.
-          </p>
-        </div>
-        {canCreate && meta.total > 0 && (
+      <PageHeading
+        title="Emisores legales"
+        description="Administra las entidades y marcas responsables de los documentos legales."
+        actions={canCreate ? (
           <Button
             render={<Link href="/catalogs/issuers/new" />}
             nativeButton={false}
@@ -177,8 +170,8 @@ export default function IssuersPage() {
             <Plus className="size-4" aria-hidden="true" />
             Crear emisor
           </Button>
-        )}
-      </header>
+        ) : undefined}
+      />
 
       {error && !forbidden ? (
         <IssuerErrorState error={error} onRetry={() => void load(page)} />
@@ -187,7 +180,7 @@ export default function IssuersPage() {
           title="Sin acceso a emisores legales"
           description="Tu rol no incluye el permiso legal.issuers.view."
         />
-      ) : meta.total > 0 || search || query || statusFilter !== "active" || typeFilter !== "all" ? (
+      ) : (
         <IssuerTable
           issuers={issuers}
           loading={loading}
@@ -209,6 +202,7 @@ export default function IssuersPage() {
             setPage(1);
           }}
           onPageChange={setPage}
+          onRefresh={() => void load(page)}
           onClearFilters={() => {
             setSearch("");
             setQuery("");
@@ -231,12 +225,6 @@ export default function IssuersPage() {
             });
           }}
         />
-      ) : (
-        <IssuerEmptyState
-          title="Aún no hay emisores legales"
-          description="Crea el primer emisor para comenzar a registrar aplicaciones y documentos."
-          action={canCreate}
-        />
       )}
     </div>
   );
@@ -257,6 +245,7 @@ function IssuerTable({
   onQueryChange,
   onApplyFilters,
   onPageChange,
+  onRefresh,
   onClearFilters,
   onStatusChanged,
   onDeleted,
@@ -267,14 +256,15 @@ function IssuerTable({
   canArchive: boolean;
   canDelete: boolean;
   search: string;
-  statusFilter: string;
+  statusFilter: IssuerFilterStatus;
   typeFilter: string;
   page: number;
   total: number;
   totalPages: number;
   onQueryChange: (value: string) => void;
-  onApplyFilters: (status: string, type: string) => void;
+  onApplyFilters: (status: IssuerFilterStatus, type: string) => void;
   onPageChange: (page: number) => void;
+  onRefresh: () => void;
   onClearFilters: () => void;
   onStatusChanged: (id: string, status: Issuer["status"]) => void;
   onDeleted: (id: string) => void;
@@ -292,7 +282,7 @@ function IssuerTable({
   const [statusChangingId, setStatusChangingId] = useState("");
   const [statusError, setStatusError] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [draftStatusFilter, setDraftStatusFilter] = useState(statusFilter);
+  const [draftStatusFilter, setDraftStatusFilter] = useState<IssuerFilterStatus>(statusFilter);
   const [draftTypeFilter, setDraftTypeFilter] = useState(typeFilter);
   const activeFilterCount = Number(statusFilter !== "active") + Number(typeFilter !== "all");
   const draftFilterCount =
@@ -303,6 +293,8 @@ function IssuerTable({
     ? draftFilterCount
     : activeFilterCount;
   const hasAnyFilters = Boolean(search) || visibleFilterCount > 0;
+  const hasAppliedFilters = Boolean(search.trim()) || statusFilter !== "active" || typeFilter !== "all";
+  const pageCount = Math.max(1, totalPages);
 
   function clearFilters() {
     setDraftStatusFilter("active");
@@ -403,7 +395,7 @@ function IssuerTable({
       header: "Emisor",
       cell: ({ row }) => (
         <>
-          <p className="font-medium text-foreground">{row.original.name}</p>
+          <p className="max-w-56 truncate font-semibold text-foreground" title={row.original.name}>{row.original.name}</p>
           <p className="mt-0.5 max-w-72 truncate text-xs text-muted-foreground">
             {row.original.legalName}
           </p>
@@ -418,7 +410,7 @@ function IssuerTable({
     {
       accessorKey: "key",
       header: "Clave",
-      cell: ({ row }) => <span className="font-mono text-xs">{row.original.key}</span>,
+      cell: ({ row }) => <span className="block max-w-44 truncate font-mono text-xs" title={row.original.key}>{row.original.key}</span>,
     },
     {
       accessorKey: "countryCode",
@@ -429,8 +421,8 @@ function IssuerTable({
       accessorKey: "status",
       header: "Estado",
       cell: ({ row }) => (
-        <Badge
-          variant={
+        <StatusBadge
+          status={
             row.original.status === "active"
               ? "success"
               : row.original.status === "inactive"
@@ -443,7 +435,7 @@ function IssuerTable({
             : row.original.status === "inactive"
               ? "Desactivado"
               : "Archivado"}
-        </Badge>
+        </StatusBadge>
       ),
     },
     {
@@ -492,7 +484,6 @@ function IssuerTable({
               canEdit && issuer.status === "active"
                 ? {
                     label: "Desactivar",
-                    destructive: true,
                     disabled: statusChangingId === issuer.id,
                     onSelect: () => void changeIssuerStatus(issuer, "inactive"),
                     icon: <CircleOff className="size-4" aria-hidden="true" />,
@@ -514,6 +505,7 @@ function IssuerTable({
                     icon: <ArchiveRestore className="size-4" aria-hidden="true" />,
                   }
                 : null,
+              canDelete && canChangeStatus ? { type: "separator" as const } : null,
               canDelete
                 ? {
                     label: "Eliminar",
@@ -534,207 +526,122 @@ function IssuerTable({
   ];
 
   return (
-    <section className="overflow-hidden rounded-xl border border-surface-line bg-card p-1 shadow-sm">
-      {statusError && (
-        <p role="alert" className="border-b border-error/30 bg-error-subtle px-3 py-2 text-sm font-medium text-error">
-          {statusError}
-        </p>
-      )}
-      <div className="flex flex-col gap-3 border-b border-surface-line p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative min-w-0 sm:w-80">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            value={search ?? ""}
-            onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="Buscar emisores…"
-            aria-label="Buscar emisores"
-            className="pl-9"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <DropdownMenu
-            open={filtersOpen}
-            onOpenChange={(open) => {
-              if (open) {
-                setDraftStatusFilter(statusFilter);
-                setDraftTypeFilter(typeFilter);
-              }
-              setFiltersOpen(open);
-            }}
-          >
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="outline"
-                  className="border-border/70 bg-transparent px-4 text-muted-foreground hover:bg-muted hover:text-foreground"
-                />
-              }
-            >
-              <Funnel className="size-4" aria-hidden="true" />
-              Filtros
-              {hasAnyFilters && (
-                <span className="ml-1 inline-flex items-center gap-1">
-                  {visibleFilterCount > 0 && (
-                    <Badge variant="secondary">{visibleFilterCount}</Badge>
-                  )}
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    aria-label="Limpiar filtros"
-                    className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      clearFilters();
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        clearFilters();
-                      }
-                    }}
-                  >
-                    <X className="size-3.5" aria-hidden="true" />
-                  </span>
-                </span>
-              )}
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuRadioGroup
-                value={draftStatusFilter}
-                onValueChange={setDraftStatusFilter}
-              >
-                <DropdownMenuLabel>Estado</DropdownMenuLabel>
-                <DropdownMenuRadioItem value="active" closeOnClick={false}>
-                  Activos
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="inactive" closeOnClick={false}>
-                  Desactivados
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="archived" closeOnClick={false}>
-                  Archivados
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuRadioGroup
-                value={draftTypeFilter}
-                onValueChange={setDraftTypeFilter}
-              >
-                <DropdownMenuLabel>Tipo</DropdownMenuLabel>
-                <DropdownMenuRadioItem value="all" closeOnClick={false}>
-                  Todos
-                </DropdownMenuRadioItem>
-                {Object.entries(typeNames).map(([value, label]) => (
-                  <DropdownMenuRadioItem key={value} value={value} closeOnClick={false}>
-                    {label}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={!hasAnyFilters}
-                onClick={clearFilters}
-              >
-                <RotateCcw className="size-4" aria-hidden="true" />
-                Limpiar filtros
-              </DropdownMenuItem>
-              <Button
-                className="mt-2 w-full disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
-                disabled={!hasPendingFilterChanges}
-                onClick={() => {
-                  onApplyFilters(draftStatusFilter, draftTypeFilter);
-                  setFiltersOpen(false);
-                }}
-              >
-                Aplicar filtros
-              </Button>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label="Más opciones de emisores"
-                  className="border-border/70 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
-                />
-              }
-            >
-              <MoreHorizontal className="size-4" aria-hidden="true" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem
-                onClick={() => {
-                  setDraftStatusFilter("archived");
-                  onApplyFilters("archived", typeFilter);
-                }}
-                disabled={statusFilter === "archived"}
-              >
-                <Archive className="size-4" aria-hidden="true" />
-                Ver emisores archivados
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-      <div className="relative px-2 pt-3 pb-3" aria-busy={loading}>
-        {loading && (
-          <div className="pointer-events-none absolute inset-3 z-10 grid min-h-48 place-items-center bg-card/70">
-            <span className="flex items-center gap-2 rounded-md bg-card px-3 py-2 text-sm text-muted-foreground shadow-sm">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-              Actualizando emisores…
-            </span>
+    <Card className="overflow-hidden shadow-sm">
+      <CardContent className="space-y-4 p-5">
+        {statusError && <Alert variant="destructive" className="font-medium">{statusError}</Alert>}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <p aria-live="polite" className="text-sm text-muted-foreground">
+              {loading ? "Actualizando emisores…" : `${total} ${total === 1 ? "emisor" : "emisores"}`}
+            </p>
+            <Badge variant="info">{statusFilter === "all" ? "Todos" : statusFilter === "active" ? "Activos" : statusFilter === "inactive" ? "Desactivados" : "Archivados"}</Badge>
+            {typeFilter !== "all" && <Badge variant="outline">{typeNames[typeFilter] ?? typeFilter}</Badge>}
           </div>
-        )}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative w-full sm:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                value={search}
+                onChange={(event) => onQueryChange(event.target.value)}
+                placeholder="Buscar emisores…"
+                aria-label="Buscar emisores"
+                className="pl-9"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <DropdownMenu
+                open={filtersOpen}
+                onOpenChange={(open) => {
+                  if (open) {
+                    setDraftStatusFilter(statusFilter);
+                    setDraftTypeFilter(typeFilter);
+                  }
+                  setFiltersOpen(open);
+                }}
+              >
+                <DropdownMenuTrigger render={<Button variant="outline" className="min-w-28 px-4" />}>
+                  <Funnel className="size-4" aria-hidden="true" />
+                  Filtros
+                  {visibleFilterCount > 0 && <Badge variant="info">{visibleFilterCount}</Badge>}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-[min(22rem,calc(100vw-2rem))] overflow-hidden p-0">
+                  <div className="border-b border-border bg-muted/30 px-4 py-3">
+                    <p className="text-sm font-semibold">Filtros</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Refina los emisores por estado o tipo.</p>
+                  </div>
+                  <div className="max-h-[min(22rem,60vh)] space-y-2 overflow-y-auto p-2">
+                    <div className="rounded-md border border-border p-1">
+                      <p className="px-3 py-1 text-xs font-semibold text-muted-foreground">Estado</p>
+                      <DropdownMenuRadioGroup aria-label="Estado del emisor" value={draftStatusFilter} onValueChange={(value) => setDraftStatusFilter(value as IssuerFilterStatus)}>
+                        <DropdownMenuRadioItem className="min-h-10" value="active" closeOnClick={false}>Activos</DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem className="min-h-10" value="inactive" closeOnClick={false}>Desactivados</DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem className="min-h-10" value="archived" closeOnClick={false}>Archivados</DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem className="min-h-10" value="all" closeOnClick={false}>Todos los estados</DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </div>
+                    <div className="rounded-md border border-border p-1">
+                      <p className="px-3 py-1 text-xs font-semibold text-muted-foreground">Tipo</p>
+                      <DropdownMenuRadioGroup aria-label="Tipo de emisor" value={draftTypeFilter} onValueChange={setDraftTypeFilter}>
+                        <DropdownMenuRadioItem className="min-h-10" value="all" closeOnClick={false}>Todos los tipos</DropdownMenuRadioItem>
+                        {Object.entries(typeNames).map(([value, label]) => (
+                          <DropdownMenuRadioItem className="min-h-10" key={value} value={value} closeOnClick={false}>{label}</DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 border-t border-border p-2">
+                    <Button variant="link" size="sm" className="flex-1 text-muted-foreground" disabled={!hasAnyFilters} onClick={clearFilters}>Restablecer</Button>
+                    <Button size="sm" className="flex-1" disabled={!hasPendingFilterChanges} onClick={() => {
+                      onApplyFilters(draftStatusFilter, draftTypeFilter);
+                      setFiltersOpen(false);
+                    }}>Aplicar</Button>
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button variant="ghost" size="icon" aria-label="Recargar emisores" title="Recargar emisores" disabled={loading} onClick={onRefresh}>
+                <RefreshCw className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+      <div className="border-t border-border" aria-busy={loading}>
         <DataTable
           columns={columns}
           data={issuers}
-          emptyMessage="No hay emisores que coincidan con la búsqueda o filtros."
+          loading={loading}
+          loadingMessage="Cargando emisores…"
+          emptyMessage={hasAppliedFilters
+            ? "No hay emisores que coincidan con la búsqueda o filtros."
+            : "Aún no hay emisores activos. Cambia el filtro de estado para consultar otros emisores."}
+          className="min-w-[940px]"
+          containerClassName="rounded-none border-0"
         />
       </div>
-      <footer className="flex flex-col gap-3 border-t border-surface-line p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <CardFooter className="flex flex-col gap-3 border-t border-border bg-card px-5 py-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <p>
-          {issuers.length
-            ? `Mostrando ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} de ${total} ${total === 1 ? "emisor" : "emisores"}`
-            : "Sin resultados"}
+          {loading ? "Cargando…" : issuers.length
+            ? `${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + issuers.length} de ${total} ${total === 1 ? "emisor" : "emisores"}`
+            : `0 de ${total} ${total === 1 ? "emisor" : "emisores"}`}
         </p>
-        {totalPages > 0 && (
-          <Pagination className="mx-0 w-auto sm:justify-end">
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  disabled={page === 1}
-                  onClick={() => onPageChange(Math.max(1, page - 1))}
-                />
-              </PaginationItem>
-              {Array.from({ length: totalPages }, (_, index) => index + 1).map(
-                (pageNumber) => (
-                  <PaginationItem key={pageNumber}>
-                    <PaginationLink
-                      isActive={pageNumber === page}
-                      aria-label={`Ir a la página ${pageNumber}`}
-                      onClick={() => onPageChange(pageNumber)}
-                    >
-                      {pageNumber}
-                    </PaginationLink>
-                  </PaginationItem>
-                ),
-              )}
-              <PaginationItem>
-                <PaginationNext
-                  disabled={page === totalPages}
-                  onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        )}
-      </footer>
+        <Pagination className="mx-0 w-auto sm:justify-end">
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                disabled={loading || page === 1}
+                onClick={() => onPageChange(Math.max(1, page - 1))}
+              />
+            </PaginationItem>
+            <PaginationItem><span className="flex h-10 items-center px-2 tabular-nums">{page} de {pageCount}</span></PaginationItem>
+            <PaginationItem>
+              <PaginationNext
+                disabled={loading || page >= pageCount}
+                onClick={() => onPageChange(Math.min(pageCount, page + 1))}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      </CardFooter>
       <AlertDialog
         open={statusTarget !== null}
         onOpenChange={(open) => !open && !statusChangingId && setStatusTarget(null)}
@@ -742,7 +649,9 @@ function IssuerTable({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogMedia
-              className={statusTarget?.status === "inactive" ? "text-destructive" : "text-primary"}
+              className={statusTarget?.status === "inactive"
+                ? "bg-zuno-warning-surface text-zuno-warning"
+                : "bg-zuno-success-surface text-zuno-success"}
             >
               {statusTarget?.status === "inactive" ? (
                 <CircleOff className="size-5" aria-hidden="true" />
@@ -770,7 +679,7 @@ function IssuerTable({
               Cancelar
             </AlertDialogCancel>
             <AlertDialogAction
-              variant={statusTarget?.status === "inactive" ? "destructive" : "default"}
+              variant="default"
               className="disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
               disabled={Boolean(statusChangingId)}
               onClick={() => void confirmStatusChange()}
@@ -793,7 +702,7 @@ function IssuerTable({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogMedia className="text-destructive">
+            <AlertDialogMedia className="bg-zuno-error-surface text-zuno-error">
               <Archive className="size-5" aria-hidden="true" />
             </AlertDialogMedia>
             <AlertDialogTitle>Archivar emisor</AlertDialogTitle>
@@ -827,7 +736,7 @@ function IssuerTable({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogMedia className="text-destructive">
+            <AlertDialogMedia className="bg-zuno-error-surface text-zuno-error">
               <Trash2 className="size-5" aria-hidden="true" />
             </AlertDialogMedia>
             <AlertDialogTitle>Eliminar emisor</AlertDialogTitle>
@@ -855,18 +764,16 @@ function IssuerTable({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </section>
+    </Card>
   );
 }
 
 function IssuerEmptyState({
   title,
   description,
-  action = false,
 }: {
   title: string;
   description: string;
-  action?: boolean;
 }) {
   return (
     <section className="grid min-h-panel-min place-items-center rounded-lg border border-border bg-card p-6 text-center shadow-sm">
@@ -876,16 +783,6 @@ function IssuerEmptyState({
         </span>
         <h2 className="mt-4 text-lg font-semibold">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-        {action && (
-          <Button
-            render={<Link href="/catalogs/issuers/new" />}
-            nativeButton={false}
-            className="mt-6 px-4"
-          >
-            <Plus className="size-4" aria-hidden="true" />
-            Crear emisor
-          </Button>
-        )}
       </div>
     </section>
   );
@@ -922,14 +819,23 @@ function IssuersSkeleton() {
   return (
     <div className="flex flex-col gap-6" aria-busy="true">
       <span className="sr-only">Cargando emisores legales…</span>
-      <div className="space-y-2">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-5 w-96 max-w-full" />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-5 w-96 max-w-full" />
+        </div>
+        <Skeleton className="h-10 w-36" />
       </div>
-      <div className="space-y-3 rounded-lg border border-border bg-card p-5 shadow-sm">
-        {Array.from({ length: 5 }, (_, index) => (
-          <Skeleton key={index} className="h-12 w-full" />
-        ))}
+      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-5">
+          <Skeleton className="h-5 w-24" />
+          <div className="flex flex-wrap gap-2"><Skeleton className="h-10 w-64 max-w-full" /><Skeleton className="h-10 w-28" /></div>
+        </div>
+        <div className="space-y-3 border-t border-border p-5">
+          <Skeleton className="h-10 w-full" />
+          {Array.from({ length: 5 }, (_, index) => <Skeleton key={index} className="h-12 w-full" />)}
+        </div>
+        <div className="border-t border-border p-5"><Skeleton className="h-5 w-44" /></div>
       </div>
     </div>
   );

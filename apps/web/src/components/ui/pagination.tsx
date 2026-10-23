@@ -40,7 +40,7 @@ function PaginationLink({
       data-slot="pagination-link"
       data-active={isActive || undefined}
       className={cn(
-        "inline-flex h-9 min-w-9 items-center justify-center rounded-md border border-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none hover:bg-muted focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+        "inline-flex h-10 min-w-10 items-center justify-center rounded-md border border-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none hover:bg-muted focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
         isActive && "border-border bg-background text-foreground shadow-sm",
         className,
       )}
@@ -80,7 +80,7 @@ function PaginationEllipsis({ className, ...props }: ComponentProps<"span">) {
     <span
       aria-hidden="true"
       data-slot="pagination-ellipsis"
-      className={cn("flex size-9 items-center justify-center", className)}
+      className={cn("flex size-10 items-center justify-center", className)}
       {...props}
     >
       <MoreHorizontal className="size-4" />

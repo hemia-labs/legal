@@ -73,7 +73,6 @@ export async function legalLogout(): Promise<void> {
     throw await apiError(identityResponse);
   }
 
-  window.location.assign("/");
 }
 
 function redirectToLogin(): never {

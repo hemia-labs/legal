@@ -3,14 +3,14 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { MoreHorizontal } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/zuno/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/zuno/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 export type ActionMenuOption =
@@ -28,7 +28,7 @@ export type ActionMenuOption =
 export function ActionMenu({
   options,
   label = "Abrir menú de acciones",
-  contentClassName = "w-48",
+  contentClassName = "min-w-48",
   triggerClassName,
 }: {
   options: Array<ActionMenuOption | false | null | undefined>;
@@ -42,9 +42,10 @@ export function ActionMenu({
         render={
           <Button
             variant="ghost"
-            size="icon-sm"
-            className={cn("size-8", triggerClassName)}
+            size="icon"
+            className={cn("size-9", triggerClassName)}
             aria-label={label}
+            title={label}
           />
         }
       >
@@ -54,25 +55,25 @@ export function ActionMenu({
         {options
           .filter((option): option is ActionMenuOption => Boolean(option))
           .map((option, index) => {
-          if (option.type === "separator") {
-            return <DropdownMenuSeparator key={option.id ?? `separator-${index}`} />;
-          }
+            if (option.type === "separator") {
+              return <DropdownMenuSeparator key={option.id ?? `separator-${index}`} />;
+            }
 
-          const item = option.href
-            ? { render: <Link href={option.href} /> }
-            : { onClick: option.onSelect };
+            const item = option.href
+              ? { render: <Link href={option.href} /> }
+              : { onClick: option.onSelect };
 
-          return (
-            <DropdownMenuItem
-              key={`${option.label}-${index}`}
-              variant={option.destructive ? "destructive" : "default"}
-              disabled={option.disabled}
-              {...item}
-            >
-              {option.icon}
-              {option.label}
-            </DropdownMenuItem>
-          );
+            return (
+              <DropdownMenuItem
+                key={`${option.label}-${index}`}
+                className={option.destructive ? "text-zuno-error data-[highlighted]:bg-zuno-error-surface data-[highlighted]:text-zuno-error" : undefined}
+                disabled={option.disabled}
+                {...item}
+              >
+                {option.icon}
+                {option.label}
+              </DropdownMenuItem>
+            );
           })}
       </DropdownMenuContent>
     </DropdownMenu>

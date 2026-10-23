@@ -38,9 +38,8 @@ import { isDatabaseSecret, type DatabaseSecret } from './types/database.types';
           return options;
         }
 
-        const secret = await secrets.getRequired<DatabaseSecret>(
-          'database/postgres',
-        );
+        const secret =
+          await secrets.getRequired<DatabaseSecret>('database/postgres');
 
         if (!isDatabaseSecret(secret)) {
           throw new Error(

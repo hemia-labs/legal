@@ -59,6 +59,25 @@ export const LegalMapper = {
       locale: entity.locale,
       title: entity.title,
       status: entity.status,
+      ...(entity.issuer
+        ? {
+            issuer: {
+              id: entity.issuer.id,
+              name: entity.issuer.name,
+              status: entity.issuer.status,
+            },
+          }
+        : {}),
+      ...(entity.application
+        ? {
+            application: {
+              id: entity.application.id,
+              key: entity.application.key,
+              name: entity.application.name,
+              status: entity.application.status,
+            },
+          }
+        : {}),
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
     };
@@ -113,7 +132,6 @@ export const LegalMapper = {
       issuerId: entity.issuerId,
       applicationId: entity.applicationId,
       organizationId: entity.organizationId,
-      productTenantId: entity.productTenantId,
       role: entity.role,
       acceptanceMode: entity.acceptanceMode,
       isBlocking: entity.isBlocking,
@@ -131,7 +149,6 @@ export const LegalMapper = {
       issuerId: entity.issuerId,
       applicationId: entity.applicationId,
       organizationId: entity.organizationId,
-      productTenantId: entity.productTenantId,
       identityIssuer: entity.identityIssuer,
       subjectId: entity.subjectId,
       documentId: entity.documentId,
@@ -163,7 +180,6 @@ export const LegalMapper = {
       documentVersionId: entity.documentVersionId,
       acceptanceRuleId: entity.acceptanceRuleId,
       organizationId: entity.organizationId,
-      productTenantId: entity.productTenantId,
       channel: entity.channel,
       recipientLogicalId: entity.recipientLogicalId,
       status: entity.status,
@@ -204,7 +220,6 @@ export const LegalMapper = {
       documentType: entity.documentType,
       productId: entity.productId,
       organizationId: entity.organizationId,
-      productTenantId: entity.productTenantId,
       sourceKind: entity.sourceKind,
       sourceHash: entity.sourceHash,
       effectiveFrom: entity.effectiveFrom,
@@ -230,5 +245,4 @@ export const LegalMapper = {
       createdAt: entity.createdAt,
     };
   },
-
 };

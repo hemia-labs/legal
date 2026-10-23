@@ -4,16 +4,18 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { PageHeading } from "@/components/page-heading";
+import { Alert } from "@/components/zuno/alert";
+import { Button } from "@/components/zuno/button";
+import { Input } from "@/components/zuno/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@/components/zuno/select";
+import { Skeleton } from "@/components/zuno/skeleton";
 import { useLegalSession } from "@/components/app-shell";
 import { legalApi, LegalApiError } from "@/lib/legal-api";
 
@@ -147,23 +149,16 @@ export default function EditIssuerPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="mt-1 text-2xl font-bold text-heading">Editar emisor legal</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Actualiza los datos que identifican a esta entidad responsable.
-          </p>
-        </div>
-        <Button render={<Link href="/catalogs/issuers" />} nativeButton={false} variant="outline" className="px-4">
-          <ArrowLeft className="size-4" aria-hidden="true" />
-          Volver a emisores
-        </Button>
-      </header>
+      <PageHeading
+        title="Editar emisor legal"
+        description="Actualiza los datos que identifican a esta entidad responsable."
+        actions={<Button render={<Link href="/catalogs/issuers" />} nativeButton={false} variant="outline" className="px-4"><ArrowLeft className="size-4" aria-hidden="true" />Volver a emisores</Button>}
+      />
 
       {submitError && (
-        <div role="alert" className="rounded-lg border border-error bg-error-subtle px-4 py-3 text-sm font-medium text-error">
+        <Alert variant="destructive" className="font-medium">
           {submitError.message}
-        </div>
+        </Alert>
       )}
 
       <form onSubmit={(event) => void submit(event)} noValidate className="rounded-lg border border-border bg-card shadow-sm">
@@ -195,8 +190,8 @@ export default function EditIssuerPage() {
           </Field>
           <Field htmlFor="issuer-type" label="Tipo" required description="Relación del emisor con el ecosistema." error={fieldErrors.type}>
             <Select name="type" value={type || null} onValueChange={(value) => { setType(value ?? ""); clearFieldError("type"); }}>
-              <SelectTrigger id="issuer-type" aria-invalid={Boolean(fieldErrors.type)} aria-describedby="issuer-type-help issuer-type-error" className="w-full">
-                <SelectValue>{issuerTypes.find(([value]) => value === type)?.[1] ?? "Selecciona un tipo"}</SelectValue>
+              <SelectTrigger id="issuer-type" aria-invalid={Boolean(fieldErrors.type)} aria-describedby={`issuer-type-help${fieldErrors.type ? " issuer-type-error" : ""}`} className="w-full rounded-lg bg-background font-normal">
+                <SelectValue placeholder="Selecciona un tipo" />
               </SelectTrigger>
               <SelectContent align="start">
                 {issuerTypes.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}

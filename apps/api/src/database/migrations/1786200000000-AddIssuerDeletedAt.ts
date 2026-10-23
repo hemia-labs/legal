@@ -4,9 +4,7 @@ export class AddIssuerDeletedAt1786200000000 implements MigrationInterface {
   name = 'AddIssuerDeletedAt1786200000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "issuers" ADD "deleted_at" TIMESTAMP`,
-    );
+    await queryRunner.query(`ALTER TABLE "issuers" ADD "deleted_at" TIMESTAMP`);
     await queryRunner.query(
       `DROP INDEX "public"."IDX_legal_issuers_key_unique"`,
     );

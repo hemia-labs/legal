@@ -1,10 +1,10 @@
 "use client";
 
 import { Fragment } from "react";
-import { Bell, LayoutGrid, PanelLeft, PanelRight, Settings } from "lucide-react";
+import Image from "next/image";
+import { BrandWordmark } from "@/components/brand-wordmark";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -13,78 +13,46 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { breadcrumbsFor } from "@/lib/nav";
+import { Separator } from "@/components/ui/separator";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import { OrganizationSelector } from "@/components/organization-selector";
+import { breadcrumbsFor } from "@/lib/nav";
 import type { LegalSession } from "@/lib/legal-session";
 
-export function AppTopbar({
-  session,
-  sidebarCollapsed,
-  onSidebarToggle,
-}: {
-  session: LegalSession;
-  sidebarCollapsed: boolean;
-  onSidebarToggle: () => void;
-}) {
+export function AppTopbar({ session }: { session: LegalSession }) {
   const breadcrumbs = breadcrumbsFor(usePathname());
+
   return (
-    <header className="sticky top-0 z-20 flex h-topbar shrink-0 items-center gap-4 border-b border-border bg-card px-4 sm:px-5 lg:px-6">
-      <button
-        type="button"
-        onClick={onSidebarToggle}
-        aria-label={sidebarCollapsed ? "Expandir menú" : "Colapsar menú"}
-        aria-expanded={!sidebarCollapsed}
-        className="absolute left-0 top-1/2 z-30 hidden size-9 -translate-x-1/2 -translate-y-1/2 place-items-center text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring md:grid"
-      >
-        {sidebarCollapsed ? (
-          <PanelRight className="size-4" />
-        ) : (
-          <PanelLeft className="size-4" />
-        )}
-      </button>
-      <Breadcrumb aria-label="Ruta actual" className="min-w-0">
-        <BreadcrumbList className="flex-nowrap gap-3 overflow-hidden text-sm">
-          <BreadcrumbItem className="hidden shrink-0 sm:inline-flex">
-            <BreadcrumbLink render={<Link href="/" />}>
-              <span className="inline-flex items-center gap-2">
-                <LayoutGrid className="size-4 shrink-0" />
-                Hemia
-              </span>
-            </BreadcrumbLink>
+    <header className="flex h-topbar shrink-0 items-center gap-2 border-b border-border px-4">
+      <SidebarTrigger aria-label="Mostrar u ocultar navegación" className="-ml-1" />
+      <Separator orientation="vertical" className="mr-2 hidden h-4 md:block" />
+      <Link href="/" aria-label="Hemia Legal" className="flex items-center gap-2 md:hidden">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[var(--hemia-navy)] p-0.5 dark:bg-transparent dark:p-0">
+          <Image src="/logo.png" alt="" width={93} height={113} className="h-full w-auto" />
+        </span>
+        <BrandWordmark compact />
+      </Link>
+      <Breadcrumb aria-label="Ruta actual" className="hidden min-w-0 md:block">
+        <BreadcrumbList className="flex-nowrap">
+          <BreadcrumbItem>
+            <BreadcrumbLink render={<Link href="/" />}>Hemia Legal</BreadcrumbLink>
           </BreadcrumbItem>
           {breadcrumbs.map(({ label, href }, index) => (
-            <Fragment key={label}>
-              <BreadcrumbSeparator className={index === 0 ? "hidden sm:block" : undefined} />
-              <BreadcrumbItem className="min-w-0 shrink-0">
+            <Fragment key={`${label}-${index}`}>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem className="min-w-0">
                 {href ? (
-                  <BreadcrumbLink render={<Link href={href} />} className="truncate">
-                    {label}
-                  </BreadcrumbLink>
+                  <BreadcrumbLink render={<Link href={href} />} className="truncate">{label}</BreadcrumbLink>
                 ) : (
-                  <BreadcrumbPage className="truncate font-semibold">{label}</BreadcrumbPage>
+                  <BreadcrumbPage className="max-w-[32vw] truncate">{label}</BreadcrumbPage>
                 )}
               </BreadcrumbItem>
             </Fragment>
           ))}
         </BreadcrumbList>
       </Breadcrumb>
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto hidden min-w-0 md:block">
         <OrganizationSelector session={session} />
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Notificaciones"
-        >
-          <Bell className="size-4" />
-        </Button>
-        <Link
-          href="/settings"
-          aria-label="Configuración legal"
-          title="Configuración legal"
-          className="grid size-9 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring"
-        >
-          <Settings className="size-4" />
-        </Link>
       </div>
     </header>
   );

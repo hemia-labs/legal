@@ -1,7 +1,6 @@
 # API (NestJS)
 
-Backend del monorepo `nextjs-nestjs`. Plantilla NestJS + TypeORM + PostgreSQL.
-La base de datos viene **desactivada** hasta que la configures (ver abajo).
+API de Hemia Legal: documentos, publicaciones y aceptaciones, con NestJS, PostgreSQL, Redis y almacenamiento S3 privado.
 
 ## Stack
 
@@ -20,7 +19,7 @@ apps/api/
   data-source.ts                 # DataSource para el CLI de migraciones
   src/
     main.ts                      # bootstrap: ValidationPipe global + CORS, escucha PORT (3017)
-    app.module.ts                # módulo raíz (DatabaseModule/WidgetsModule comentados hasta tener DB)
+    app.module.ts                # módulos activos de datos, auth, Legal y almacenamiento
     config/
       database.config.ts         # config namespaced 'database' (registerAs)
       secrets.config.ts          # scope y credenciales de Vault (registerAs)
@@ -29,7 +28,9 @@ apps/api/
       database.types.ts          # contrato del secreto de conexión a PostgreSQL
       migrations/                # migraciones TypeORM
     modules/
-      widgets/                   # módulo dummy de ejemplo (controller, service, entity, dtos)
+      legal/                     # documentos, publicaciones, aceptaciones e integraciones
+      auth/                      # OAuth/SSO y sesiones Redis
+      storage/                   # objetos privados y URLs firmadas
 ```
 
 ## Variables de entorno
@@ -100,38 +101,13 @@ bun install
 bun run --cwd apps/api start:dev   # watch mode
 ```
 
-Sin DB el servidor levanta igual (responde en `/`). El módulo de datos está apagado.
+La API requiere PostgreSQL y Redis disponibles. Configura el entorno y aplica las migraciones con `bun run --cwd apps/api migration:run` antes de iniciar. La aplicación no ejecuta migraciones ni seeds al arrancar.
 
-## Activar la base de datos
+El bucket de publicaciones debe tener versioning y Object Lock configurados fuera de la aplicación. Consulta [el entorno](../../docs/legal/environment.md) y [la autorización personal y de servicio](../../docs/legal/personal-service-authorization.md).
 
-1. Completa `.env`.
-2. En `src/app.module.ts` descomenta los imports de `DatabaseModule` y `WidgetsModule`.
-3. Aplica manualmente el contrato SQL de almacenamiento documental acordado con DBA.
-   Esta implementación no genera ni ejecuta migraciones TypeORM.
+Legal consume eventos de Access mediante `@hemia/event-bus@0.0.3` publicado en npm; los avisos invalidan contexto y no conceden roles. Las respuestas salen mediante outbox con `EVENT_BUS_OUTBOX_PUBLISHER_ENABLED=true`. Consulta [el flujo de eventos](../../docs/legal/event-bus-access-provisioning.md).
 
-Para el flujo de publicaciones, el bucket debe existir y tener versioning y Object Lock
-configurados fuera de la aplicación.
-
-Legal recibe provisioning, cambios de producto y memberships desde RabbitMQ mediante
-`@hemia/event-bus`; no expone un webhook HTTP para eventos de Access. La migración
-`1785727030700_AddEventBusOutboxMetadata` debe ejecutarse manualmente después de aplicar las
-migraciones de tenants. El flujo y los payloads están documentados en
-`docs/legal/event-bus-access-provisioning.md`.
-El estado de la conexión puede consultarse en `GET /health/event-bus`.
-Por ahora los eventos outbound de provisioning se publican directamente; el relay periódico de
-El publisher de outbox debe permanecer activo con `EVENT_BUS_OUTBOX_PUBLISHER_ENABLED=true`.
-
-Las entidades nuevas son `legal_publications`, `legal_publication_assets` y
-`legal_evidence`; también requieren las columnas de contexto y autenticación descritas
-en `docs/almacenamiento_hemia_legal.md`.
-
-No actives el flujo nuevo antes de aplicar ese contrato en PostgreSQL.
-
-Las migraciones existentes del proyecto pueden seguir documentando otros cambios:
-
-```bash
-bun run --cwd apps/api migration:run
-```
+Se retiraron el listener y catálogo de workload, su SDK experimental y los tarballs de vendor. La autenticación de servicios conserva OAuth con secretos y clientes de servicio explícitos. El almacenamiento S3 sigue atendiendo los flujos vigentes de publicación y evidencia.
 
 ## Migraciones
 
@@ -159,3 +135,5 @@ Configura `E2E_DB_DATABASE` antes de ejecutar `bun run test:e2e`.
 bun run --cwd apps/api test
 bun run --cwd apps/api build
 ```
+
+Todas las pruebas viven en [`test/`](../../test/README.md). Los módulos agrupan Redis, sesión, eventos y las responsabilidades de aceptación/registro de integraciones; los contratos HTTP se conservan.

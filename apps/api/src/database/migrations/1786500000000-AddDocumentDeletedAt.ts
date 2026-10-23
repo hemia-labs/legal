@@ -22,8 +22,6 @@ export class AddDocumentDeletedAt1786500000000 implements MigrationInterface {
     await queryRunner.query(
       `CREATE UNIQUE INDEX "IDX_legal_documents_context_key_locale_unique" ON "documents" ("issuer_id", "application_id", "key", "locale")`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "documents" DROP COLUMN "deleted_at"`,
-    );
+    await queryRunner.query(`ALTER TABLE "documents" DROP COLUMN "deleted_at"`);
   }
 }

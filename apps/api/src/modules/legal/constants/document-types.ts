@@ -1,7 +1,8 @@
 import type { SourceKind } from '../../storage/types/storage.types';
 
 export type LegalDocumentWorkflow = 'public' | 'internal';
-export type LegalDocumentVariant = 'standard' | 'integral' | 'simplified' | 'short';
+export type LegalDocumentVariant =
+  'standard' | 'integral' | 'simplified' | 'short';
 export type AcceptancePolicy = 'required' | 'optional' | 'configurable';
 
 export type LegalDocumentPolicy = {
@@ -31,6 +32,7 @@ export const LEGAL_DOCUMENT_POLICIES: Record<string, LegalDocumentPolicy> = {
     ...publicPolicy('Aviso de privacidad'),
     variants: ['integral', 'simplified', 'short'],
   },
+  refund_policy: publicPolicy('Política de reembolso'),
   acceptable_use_policy: publicPolicy('Política de uso aceptable'),
   ai_usage_policy: publicPolicy('Política de uso de IA'),
   cookie_policy: publicPolicy('Política de cookies'),

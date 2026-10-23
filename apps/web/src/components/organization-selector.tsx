@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { legalApi } from "@/lib/legal-api";
 import type { LegalSession } from "@/lib/legal-session";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/zuno/button";
 
 export function OrganizationSelector({
   session,
@@ -73,7 +73,7 @@ export function OrganizationSelector({
         aria-label="Organización activa"
       />
       <span className="hidden text-xs text-muted-foreground xl:inline">
-        Tenant {session.productTenantId?.slice(0, 8) ?? "—"}
+        Organización {session.activeOrganizationId?.slice(0, 8) ?? "—"}
       </span>
       <span className="hidden max-w-56 truncate text-xs text-muted-foreground 2xl:inline">
         {session.permissions.length

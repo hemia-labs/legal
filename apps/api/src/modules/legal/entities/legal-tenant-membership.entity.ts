@@ -12,11 +12,11 @@ import { LegalProductTenant } from './legal-product-tenant.entity';
 import { LegalRole } from './legal-role.entity';
 
 @Entity('tenant_memberships')
-@Index('IDX_legal_memberships_identity_tenant_unique', [
-  'tenantId',
-  'identityIssuer',
-  'subjectId',
-], { unique: true })
+@Index(
+  'IDX_legal_memberships_identity_tenant_unique',
+  ['tenantId', 'identityIssuer', 'subjectId'],
+  { unique: true },
+)
 export class LegalTenantMembership {
   @PrimaryGeneratedColumn('uuid')
   id: string;

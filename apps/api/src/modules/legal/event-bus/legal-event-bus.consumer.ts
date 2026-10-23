@@ -8,8 +8,8 @@ import {
   validateAccessEventData,
   type AccessEventData,
   type AccessEventType,
-} from '../contracts/access-event.contracts';
-import { AccessEventsService } from '../services/access-events.service';
+} from './access-event.contracts';
+import { AccessEventsService } from './access-events.service';
 import { LegalEventBusClient } from './legal-event-bus.client';
 
 @Injectable()

@@ -1,32 +1,22 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import {
-  ArrowLeft,
-  CheckCircle2,
-  Clock3,
-  FileArchive,
-  FileText,
-  LoaderCircle,
-  RefreshCw,
-  Rocket,
-  Upload,
-} from "lucide-react";
+import type { FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import { FileArchive } from "lucide-react";
 import { useLegalSession } from "@/components/app-shell";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { DocumentDetailHeader } from "@/components/documents/document-detail-header";
+import { DocumentDetailTabs, type DocumentDetailTabValue } from "@/components/documents/document-detail-tabs";
+import { DocumentPublicationSheet, type PublicationStep } from "@/components/documents/document-publication-sheet";
+import { Skeleton } from "@/components/zuno/skeleton";
 import {
-  LegalDocument,
-  DocumentTypeOption,
-  LegalDraft,
-  LegalVersion,
-  PublicationPreview,
-  PublicationResult,
-  SourceKind,
+  type DocumentTypeOption,
+  type LegalDocument,
+  type LegalDraft,
+  type LegalVersion,
+  type PublicationPreview,
+  type PublicationResult,
+  type SourceKind,
   getDocument,
   getDocumentDraft,
   listDocumentTypes,
@@ -42,12 +32,12 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 export default function DocumentDetailPage() {
   const params = useParams<{ documentId: string }>();
   const documentId = params.documentId;
-  const router = useRouter();
   const session = useLegalSession();
   const [document, setDocument] = useState<LegalDocument | null>(null);
   const [policy, setPolicy] = useState<DocumentTypeOption | null>(null);
   const [draft, setDraft] = useState<LegalDraft | null>(null);
   const [versions, setVersions] = useState<LegalVersion[]>([]);
+  const [activeTab, setActiveTab] = useState<DocumentDetailTabValue>("summary");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -56,7 +46,10 @@ export default function DocumentDetailPage() {
   const [sourceKind, setSourceKind] = useState<SourceKind | null>(null);
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<PublicationPreview | null>(null);
+  const [reviewing, setReviewing] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [publicationSheetOpen, setPublicationSheetOpen] = useState(false);
+  const [publicationStep, setPublicationStep] = useState<PublicationStep>(1);
   const [publication, setPublication] = useState<PublicationResult | null>(null);
   const [version, setVersion] = useState("1.0.0");
   const [effectiveFrom, setEffectiveFrom] = useState("");
@@ -104,11 +97,14 @@ export default function DocumentDetailPage() {
     void Promise.resolve().then(() => load());
   }, [load]);
 
-  const latestVersion = versions[0];
-  const fileLabel = useMemo(() => {
-    if (!file) return "Ningún archivo seleccionado";
-    return `${file.name} · ${formatBytes(file.size)}`;
-  }, [file]);
+  const currentVersion = versions.find((item) => item.status === "published");
+  const statusLabel = isArchived ? "Archivado" : currentVersion ? "Publicado" : draft ? "Borrador" : "Activo";
+  const statusVariant: "neutral" | "success" | "warning" = isArchived ? "neutral" : currentVersion ? "success" : "warning";
+
+  function openPublicationSheet() {
+    setPublicationStep(1);
+    setPublicationSheetOpen(true);
+  }
 
   function selectFile(selected: File | undefined) {
     setFileError("");
@@ -131,9 +127,17 @@ export default function DocumentDetailPage() {
     setSourceKind(kind);
   }
 
-  async function uploadSource(event: FormEvent<HTMLFormElement>) {
+  async function continueFromSource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!file || !sourceKind || !document || isArchived) return;
+    if (!document || isArchived) return;
+    if (!file && !draft) {
+      setFileError("Carga una fuente para continuar con la publicación.");
+      return;
+    }
+    if (!file || !sourceKind) {
+      setPublicationStep(2);
+      return;
+    }
     setUploading(true);
     setError("");
     try {
@@ -141,6 +145,7 @@ export default function DocumentDetailPage() {
       setFile(null);
       setSourceKind(null);
       await load(true);
+      setPublicationStep(2);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo cargar la fuente.");
     } finally {
@@ -161,14 +166,18 @@ export default function DocumentDetailPage() {
     };
   }
 
-  async function previewDraft(event: FormEvent<HTMLFormElement>) {
+  async function reviewPublication(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!document || !draft || isArchived || !canPreview) return;
+    setReviewing(true);
     setError("");
     try {
       setPreview(await previewPublication(document.id, publicationPayload()));
+      setPublicationStep(3);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo previsualizar la publicación.");
+    } finally {
+      setReviewing(false);
     }
   }
 
@@ -180,6 +189,7 @@ export default function DocumentDetailPage() {
       const result = await publishDraft(document.id, publicationPayload());
       setPublication(result);
       setPreview(null);
+      setPublicationSheetOpen(false);
       await load(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo publicar la versión.");
@@ -193,138 +203,82 @@ export default function DocumentDetailPage() {
   if (!document) return <State title="Documento no encontrado" description={error || "No existe o no tienes acceso a este documento."} />;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <Button variant="ghost" className="mb-3 -ml-3 h-12" onClick={() => router.push("/documents")}>
-            <ArrowLeft className="size-4" /> Documentos
-          </Button>
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="font-display text-4xl font-semibold leading-none">{document.title}</h1>
-            <Badge variant={isArchived ? "neutral" : "success"}>{isArchived ? "Archivado" : "Activo"}</Badge>
-          </div>
-          <p className="mt-2 font-mono text-sm text-muted-foreground">{document.key} · {document.locale} · {document.documentType} · {document.documentVariant}</p>
-          <p className="mt-1 text-sm text-muted-foreground">Flujo: {policy?.workflow === "internal" ? "interno" : "público"} · Fuentes: {policy?.allowedSourceKinds.join(", ")}</p>
-        </div>
-        <Button variant="outline" className="h-12" onClick={() => void load(true)} disabled={refreshing}>
-          {refreshing ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-          Actualizar
-        </Button>
-      </div>
+    <div className="flex min-w-0 flex-col gap-6">
+      <DocumentDetailHeader
+        document={document}
+        policy={policy}
+        currentVersion={currentVersion}
+        statusLabel={statusLabel}
+        statusVariant={statusVariant}
+        refreshing={refreshing}
+        isArchived={Boolean(isArchived)}
+        hasDraft={Boolean(draft)}
+        onRefresh={() => void load(true)}
+        onPublish={openPublicationSheet}
+        onOpenTab={setActiveTab}
+      />
 
       {error && <Notice tone="error">{error}</Notice>}
       {isArchived && <Notice tone="warning">Este documento está archivado. No se puede editar, versionar, publicar ni servir públicamente.</Notice>}
-      {publication && <Notice tone={publication.status === "failed" ? "error" : "info"}>
-        {publication.status === "failed" ? "La publicación falló." : "Publicación solicitada; el procesamiento está pendiente."}
-      </Notice>}
+      {publication && <Notice tone={publication.status === "failed" ? "error" : "info"}>{publication.status === "failed" ? "La publicación falló." : "Publicación solicitada; el procesamiento está pendiente."}</Notice>}
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <section className="rounded-lg border border-border bg-card p-6 shadow-sm">
-          <SectionTitle icon={<Upload className="size-4" />} title={draft ? "Reemplazar fuente" : "Cargar fuente"} />
-          <p className="mt-1 text-sm text-muted-foreground">{policy?.allowedSourceKinds.join(", ")} · Tamaño máximo: 10 MiB.</p>
-          <form onSubmit={uploadSource} className="mt-5 space-y-4">
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium">Archivo fuente</span>
-              <Input
-                type="file"
-                accept={acceptAttribute(policy?.allowedSourceKinds ?? [])}
-                className="h-12 cursor-pointer py-2"
-                onChange={(event) => selectFile(event.target.files?.[0])}
-                disabled={isArchived || (!draft ? !canUpload : !canReplace)}
-              />
-            </label>
-            <div className="rounded-lg border border-dashed border-border bg-secondary/40 px-4 py-3 text-sm">
-              <p className="font-medium">{fileLabel}</p>
-              {sourceKind && <p className="mt-1 text-muted-foreground">Tipo detectado: {sourceKind}</p>}
-            </div>
-            {fileError && <p className="text-sm text-error" role="alert">{fileError}</p>}
-            <Button className="h-12" disabled={!file || !sourceKind || uploading || isArchived || (!draft ? !canUpload : !canReplace)}>
-              {uploading && <LoaderCircle className="size-4 animate-spin" />}
-              {uploading ? "Cargando…" : draft ? "Reemplazar fuente" : "Subir fuente"}
-            </Button>
-          </form>
-        </section>
+      <DocumentDetailTabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        document={document}
+        policy={policy}
+        draft={draft}
+        versions={versions}
+        currentVersion={currentVersion}
+        statusLabel={statusLabel}
+        statusVariant={statusVariant}
+        permissions={permissions}
+        isArchived={Boolean(isArchived)}
+        onPublish={openPublicationSheet}
+        onOpenVersions={() => setActiveTab("versions")}
+      />
 
-        <section className="rounded-lg border border-border bg-card p-6 shadow-sm">
-          <SectionTitle icon={<FileText className="size-4" />} title="Metadata del draft" />
-          {draft ? (
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <Meta label="Estado" value="draft" />
-              <Meta label="Tipo de fuente" value={draft.sourceKind ?? "—"} />
-              <Meta label="Nombre" value={draft.sourceFileName ?? "—"} />
-              <Meta label="MIME / tamaño" value={`${draft.sourceContentType ?? "—"} · ${formatBytes(draft.sourceSizeBytes)}`} />
-              <Meta label="sourceHash" value={draft.sourceHash ?? "—"} mono />
-              <Meta label="contentHash" value={draft.contentHash ?? "—"} mono />
-            </div>
-          ) : (
-            <EmptyPanel text="Todavía no hay una fuente cargada para este documento." />
-          )}
-        </section>
-      </div>
-
-      <section className="rounded-lg border border-border bg-card p-6 shadow-sm">
-        <SectionTitle icon={<Rocket className="size-4" />} title="Publicar versión" />
-        <p className="mt-1 text-sm text-muted-foreground">La publicación se procesa de forma asíncrona y genera artefactos seguros en S3.</p>
-        <form onSubmit={previewDraft} className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <Field label="Versión"><Input className="h-12" value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" pattern="^\\d+\\.\\d+\\.\\d+$" aria-invalid={!/^\d+\.\d+\.\d+$/.test(version)} /></Field>
-          <Field label="Fecha efectiva"><Input className="h-12" type="datetime-local" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} /></Field>
-          <Field label="Fecha de expiración"><Input className="h-12" type="datetime-local" value={effectiveUntil} onChange={(event) => setEffectiveUntil(event.target.value)} /></Field>
-          <Field label="Deadline de aceptación"><Input className="h-12" type="datetime-local" value={acceptanceDeadline} onChange={(event) => setAcceptanceDeadline(event.target.value)} /></Field>
-          <Field label="Periodo de gracia (días)"><Input className="h-12" type="number" min="0" value={gracePeriodDays} onChange={(event) => setGracePeriodDays(event.target.value)} /></Field>
-          {policy?.acceptance !== "optional" && <Field label="Regla de aceptación">
-            <Select value={acceptanceMode} onValueChange={(value) => setAcceptanceMode(value as typeof acceptanceMode)}>
-              <SelectTrigger className="h-12"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="individual">Individual</SelectItem>
-                <SelectItem value="organization_representative">Representante de organización</SelectItem>
-                <SelectItem value="informational">Informativa</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>}
-          {policy?.acceptance !== "optional" && <label className="flex h-12 items-center gap-3 text-sm font-medium md:col-span-2">
-            <input type="checkbox" checked={isBlocking} onChange={(event) => setIsBlocking(event.target.checked)} />
-            La aceptación bloquea el acceso
-          </label>}
-          <div className="flex flex-wrap gap-3 md:col-span-2 xl:col-span-3">
-            <Button className="h-12" type="submit" disabled={!draft || isArchived || !canPreview || !/^\d+\.\d+\.\d+$/.test(version)}>
-              <CheckCircle2 className="size-4" /> Previsualizar conflictos
-            </Button>
-            <Button className="h-12" type="button" variant="outline" onClick={() => void publish()} disabled={!preview?.canPublish || publishing || !canPublish}>
-              {publishing ? <LoaderCircle className="size-4 animate-spin" /> : <Rocket className="size-4" />}
-              {publishing ? "Publicando…" : "Publicar"}
-            </Button>
-          </div>
-        </form>
-        {preview && <div className="mt-5 rounded-lg border border-border bg-secondary/40 p-4 text-sm">
-          <p className="font-medium">Preview para {preview.version}</p>
-          {preview.conflicts.length ? <ul className="mt-2 list-disc pl-5 text-error">{preview.conflicts.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-2 text-success">No se detectaron conflictos.</p>}
-          {!preview.canPublish && <p className="mt-2 text-error">La versión no puede publicarse todavía.</p>}
-        </div>}
-      </section>
-
-      <section className="rounded-lg border border-border bg-card p-6 shadow-sm">
-        <SectionTitle icon={<Clock3 className="size-4" />} title="Historial de versiones" />
-        {versions.length ? <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="border-b border-border text-muted-foreground"><tr><th className="px-3 py-3 font-medium">Versión</th><th className="px-3 py-3 font-medium">Estado</th><th className="px-3 py-3 font-medium">Fuente</th><th className="px-3 py-3 font-medium">Hash</th><th className="px-3 py-3 font-medium">Fechas</th><th className="px-3 py-3 font-medium">Assets</th></tr></thead><tbody>{versions.map((item) => <tr key={item.id} className="border-b border-border last:border-0"><td className="px-3 py-3 font-medium">{item.version}</td><td className="px-3 py-3"><Badge variant={item.status === "published" ? "success" : "neutral"}>{item.status}</Badge></td><td className="px-3 py-3">{item.sourceKind ?? "—"}<span className="block text-xs text-muted-foreground">{item.sourceFileName ?? ""}</span></td><td className="max-w-[180px] truncate px-3 py-3 font-mono text-xs" title={item.contentHash ?? ""}>{item.contentHash ?? "—"}</td><td className="px-3 py-3 text-muted-foreground">{formatDate(item.publishedAt ?? item.createdAt)}</td><td className="px-3 py-3">{item.status === "published" ? "Artefactos publicados" : "Pendiente"}</td></tr>)}</tbody></table></div> : <EmptyPanel text="Todavía no hay versiones publicadas." />}
-        {latestVersion && <p className="mt-4 text-xs text-muted-foreground">Última versión: {latestVersion.version}. El estado puede cambiar cuando el worker termine.</p>}
-      </section>
+      <DocumentPublicationSheet
+        open={publicationSheetOpen}
+        onOpenChange={setPublicationSheetOpen}
+        policy={policy}
+        draft={draft}
+        currentVersion={currentVersion}
+        file={file}
+        sourceKind={sourceKind}
+        fileError={fileError}
+        publicationStep={publicationStep}
+        version={version}
+        effectiveFrom={effectiveFrom}
+        effectiveUntil={effectiveUntil}
+        acceptanceDeadline={acceptanceDeadline}
+        gracePeriodDays={gracePeriodDays}
+        acceptanceMode={acceptanceMode}
+        isBlocking={isBlocking}
+        preview={preview}
+        uploading={uploading}
+        reviewing={reviewing}
+        publishing={publishing}
+        isArchived={Boolean(isArchived)}
+        canUpload={canUpload}
+        canReplace={canReplace}
+        canPreview={canPreview}
+        canPublish={canPublish}
+        onSelectFile={selectFile}
+        onContinueFromSource={continueFromSource}
+        onReviewPublication={reviewPublication}
+        onPublish={publish}
+        onStepChange={setPublicationStep}
+        onVersionChange={setVersion}
+        onEffectiveFromChange={setEffectiveFrom}
+        onEffectiveUntilChange={setEffectiveUntil}
+        onAcceptanceDeadlineChange={setAcceptanceDeadline}
+        onGracePeriodDaysChange={setGracePeriodDays}
+        onAcceptanceModeChange={setAcceptanceMode}
+        onBlockingChange={setIsBlocking}
+      />
     </div>
   );
-}
-
-function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string }) {
-  return <h2 className="flex items-center gap-2 text-base font-semibold">{icon}{title}</h2>;
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block"><span className="mb-1.5 block text-sm font-medium">{label}</span>{children}</label>;
-}
-
-function Meta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return <div className="min-w-0"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-1 truncate text-sm ${mono ? "font-mono" : ""}`} title={value}>{value}</p></div>;
-}
-
-function EmptyPanel({ text }: { text: string }) {
-  return <div className="mt-5 rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">{text}</div>;
 }
 
 function Notice({ children, tone }: { children: React.ReactNode; tone: "error" | "warning" | "info" }) {
@@ -337,7 +291,7 @@ function State({ title, description }: { title: string; description: string }) {
 }
 
 function DetailSkeleton() {
-  return <div className="space-y-6" aria-busy="true"><Skeleton className="h-12 w-72" /><div className="grid gap-6 lg:grid-cols-2"><Skeleton className="h-64" /><Skeleton className="h-64" /></div><Skeleton className="h-80" /><Skeleton className="h-64" /></div>;
+  return <div className="space-y-6" aria-busy="true"><Skeleton className="h-48" /><Skeleton className="h-12" /><Skeleton className="h-96" /></div>;
 }
 
 function toIso(value: string) {
@@ -346,22 +300,6 @@ function toIso(value: string) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function formatBytes(value: number | null | undefined) {
-  if (value == null) return "—";
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-function formatDate(value: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("es-MX", { dateStyle: "medium" }).format(new Date(value));
-}
-
 function hasPermission(granted: string[], required: string) {
   return granted.some((permission) => permission === "*.*" || permission === required || (permission.endsWith(".*") && required.startsWith(permission.slice(0, -1))));
-}
-
-function acceptAttribute(kinds: SourceKind[]) {
-  return kinds.map((kind) => ({ pdf: ".pdf,application/pdf", html: ".html,.htm,text/html", markdown: ".md,.markdown,text/markdown" }[kind])).join(",");
 }

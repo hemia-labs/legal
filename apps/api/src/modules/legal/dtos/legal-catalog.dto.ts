@@ -283,6 +283,21 @@ export class AuditEventFilterDto extends ApplicationFilterDto {
   applicationId?: string;
 }
 
+export class DocumentAuditFilterDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit = 20;
+}
+
 export class AcceptanceExportFilterDto extends ApplicationFilterDto {
   @IsOptional()
   @IsUUID()
@@ -307,11 +322,6 @@ export class AcceptanceRuleInputDto {
   @IsString()
   @MaxLength(120)
   organizationId?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  productTenantId?: string;
 
   @IsOptional()
   @IsString()
@@ -368,15 +378,8 @@ export class MePendingQueryDto {
   @IsUUID()
   applicationId: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  organizationId?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  productTenantId?: string;
+  @IsUUID()
+  organizationId: string;
 
   @IsOptional()
   @IsLocale()
@@ -409,15 +412,8 @@ export class CreateAcceptanceDto {
   @IsBoolean()
   accepted: boolean;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  organizationId?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  productTenantId?: string;
+  @IsUUID()
+  organizationId: string;
 
   @IsOptional()
   @IsLocale()

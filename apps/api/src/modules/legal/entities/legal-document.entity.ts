@@ -39,7 +39,11 @@ export class LegalDocument {
   @Column({ length: 80 })
   key: string;
 
-  @Column({ name: 'document_type', length: 40, default: 'terms_and_conditions' })
+  @Column({
+    name: 'document_type',
+    length: 40,
+    default: 'terms_and_conditions',
+  })
   documentType: string;
 
   @Column({ name: 'document_variant', length: 20, default: 'standard' })

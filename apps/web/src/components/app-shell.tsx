@@ -1,8 +1,10 @@
 "use client";
 
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, type CSSProperties, type ReactNode } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppTopbar } from "@/components/app-topbar";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/zuno/tooltip";
 import type { LegalSession } from "@/lib/legal-session";
 
 const LegalSessionContext = createContext<LegalSession | null>(null);
@@ -14,23 +16,24 @@ export function useLegalSession() {
 }
 
 export function AppShell({ session, children }: { session: LegalSession; children: ReactNode }) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
   return (
     <LegalSessionContext.Provider value={session}>
-      <div className="flex min-h-screen">
-        <AppSidebar session={session} collapsed={sidebarCollapsed} />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <AppTopbar
-            session={session}
-            sidebarCollapsed={sidebarCollapsed}
-            onSidebarToggle={() => setSidebarCollapsed((current) => !current)}
-          />
-          <main className="min-w-0 flex-1 bg-background px-4 py-6 sm:px-6 lg:px-8">
-            {children}
-          </main>
-        </div>
-      </div>
+      <TooltipProvider>
+        <SidebarProvider
+          style={{
+            "--sidebar-width": "var(--layout-sidebar-width)",
+            "--sidebar-width-icon": "var(--layout-sidebar-collapsed-width)",
+          } as CSSProperties}
+        >
+          <AppSidebar session={session} />
+          <SidebarInset>
+            <AppTopbar session={session} />
+            <div className="flex flex-1 flex-col gap-4 p-4">
+              <div className="min-h-full min-w-0 flex-1 rounded-xl bg-muted/50 p-4 md:p-6">{children}</div>
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      </TooltipProvider>
     </LegalSessionContext.Provider>
   );
 }

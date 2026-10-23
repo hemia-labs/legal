@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { PageHeading } from "@/components/page-heading";
+import { Alert } from "@/components/zuno/alert";
+import { Button } from "@/components/zuno/button";
+import { Card, CardContent, CardFooter } from "@/components/zuno/card";
+import { Input } from "@/components/zuno/input";
 import {
   Select,
   SelectContent,
@@ -15,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@/components/zuno/skeleton";
 import { useLegalSession } from "@/components/app-shell";
 import { applicationKeyFromName } from "@/lib/application-key";
 import { LegalApiError } from "@/lib/legal-api";
@@ -139,20 +141,15 @@ export default function NewApplicationPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header>
-        <h1 className="text-2xl font-bold text-heading">Nueva aplicación</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Registra un producto o sistema que consumirá documentos legales.
-        </p>
-      </header>
+      <PageHeading title="Nueva aplicación" description="Registra un producto o sistema que consumirá documentos legales." />
 
       {submitError && (
-        <div role="alert" className="rounded-lg border border-error bg-error-subtle px-4 py-3 text-sm font-medium text-error">
+        <Alert variant="destructive" className="font-medium">
           <p>{submitError.message}</p>
           {submitError instanceof LegalApiError && submitError.traceId && (
             <p className="mt-1 font-mono text-xs">Referencia: {submitError.traceId}</p>
           )}
-        </div>
+        </Alert>
       )}
 
       <form onSubmit={(event) => void submit(event)} noValidate>

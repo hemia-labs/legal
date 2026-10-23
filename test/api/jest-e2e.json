@@ -1,0 +1,27 @@
+{
+  "moduleFileExtensions": [
+    "js",
+    "json",
+    "ts"
+  ],
+  "rootDir": "../..",
+  "testEnvironment": "node",
+  "setupFiles": [
+    "<rootDir>/test/api/e2e/setup-e2e.ts"
+  ],
+  "testRegex": ".e2e-spec.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": [
+      "<rootDir>/apps/api/node_modules/ts-jest",
+      {
+        "tsconfig": "<rootDir>/test/api/tsconfig.json"
+      }
+    ]
+  },
+  "roots": [
+    "<rootDir>/test/api/e2e"
+  ],
+  "modulePaths": [
+    "<rootDir>/apps/api/node_modules"
+  ]
+}

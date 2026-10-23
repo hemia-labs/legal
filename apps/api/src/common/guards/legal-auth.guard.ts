@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import type { AuthenticatedUser } from '@hemia/auth';
 import { SsoAuthGuard } from '@hemia/auth/nestjs';
 import type { LegalRequest } from '../types/legal-request';
-import { LegalContextService } from '../../modules/legal/services/legal-context.service';
+import { LegalContextService } from '../../modules/legal/session/legal-context.service';
 
 @Injectable()
 export class LegalAuthGuard implements CanActivate {
@@ -24,10 +24,12 @@ export class LegalAuthGuard implements CanActivate {
     const legalContext = await this.contextService.require(request);
 
     request.actor = {
-      identityIssuer: user.iss ?? request.accessContext?.identity.issuer ?? 'sso',
+      identityIssuer:
+        user.iss ?? request.accessContext?.identity.issuer ?? 'sso',
       subjectId: user.sub,
       actorType: 'user',
       permissions: legalContext.permissions,
+      authorization: legalContext.authorization,
       traceId: request.header('x-trace-id') || randomUUID(),
     };
     request.legalContext = legalContext;

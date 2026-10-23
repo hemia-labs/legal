@@ -7,3 +7,4 @@ dist/
 !apps/web/.agents/**
 events.log.jsonl
 docs/
+.codegraph

@@ -23,7 +23,12 @@ export class LegalProductTenant {
   @Column({ name: 'organization_id', length: 120 })
   organizationId: string;
 
-  @Column({ name: 'external_tenant_id', type: 'varchar', length: 160, nullable: true })
+  @Column({
+    name: 'external_tenant_id',
+    type: 'varchar',
+    length: 160,
+    nullable: true,
+  })
   externalTenantId: string | null;
 
   @Column({ length: 120 })

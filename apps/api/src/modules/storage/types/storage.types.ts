@@ -44,9 +44,15 @@ export function buildPublicationSourceKey(
   sourceHash: string,
 ) {
   const extension = sourceKind === 'markdown' ? 'md' : sourceKind;
-  return [...versionPrefix(context), 'source', `${sourceHash}.${extension}`].join(
-    '/',
-  );
+  return [
+    ...versionPrefix(context),
+    'source',
+    `${sourceHash}.${extension}`,
+  ].join('/');
+}
+
+export function buildDocumentPrefix(documentId: string) {
+  return `legal/documents/${safeSegment(documentId)}/`;
 }
 
 function versionPrefix(context: PublicationKeyContext) {

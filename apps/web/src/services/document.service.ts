@@ -18,6 +18,18 @@ export type LegalDocument = {
   locale: string;
   title: string;
   status: LegalDocumentStatus;
+  issuer?: {
+    id: string;
+    name: string;
+    legalName: string;
+    status: string;
+  };
+  application?: {
+    id: string;
+    key: string;
+    name: string;
+    status: string;
+  };
   createdAt: string;
   updatedAt: string;
 };
@@ -53,6 +65,8 @@ export type LegalVersion = {
   acceptanceDeadline: string | null;
   gracePeriodDays: number;
   publishedAt: string | null;
+  publishedByIdentityIssuer: string | null;
+  publishedBySubjectId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -100,6 +114,68 @@ export type DocumentTypeOption = {
   requiresHtml: boolean;
   acceptance: AcceptancePolicy;
   variants: LegalDocumentVariant[];
+};
+
+export type VersionSection = {
+  id: string;
+  label: string;
+  level: number;
+};
+
+export type VersionContent = {
+  versionId: string;
+  version: string;
+  status: LegalVersionStatus;
+  sourceKind: SourceKind | null;
+  fileName: string | null;
+  sizeBytes: number | null;
+  contentHash: string | null;
+  mode: "html" | "pdf";
+  html: string | null;
+  url: string | null;
+  expiresAt: string | null;
+  sections: VersionSection[];
+};
+
+export type DocumentAcceptance = {
+  id: string;
+  documentId: string;
+  documentVersionId: string;
+  organizationId: string | null;
+  identityIssuer: string;
+  subjectId: string;
+  acceptedByIdentityIssuer: string;
+  acceptedBySubjectId: string;
+  acceptanceMode: string;
+  roleAtAcceptance: string | null;
+  acceptedAt: string;
+  createdAt: string;
+};
+
+export type DocumentAcceptances = {
+  total: number;
+  items: DocumentAcceptance[];
+};
+
+export type DocumentAuditEvent = {
+  id: string;
+  issuerId: string | null;
+  applicationId: string | null;
+  traceId: string;
+  actorIdentityIssuer: string;
+  actorSubjectId: string;
+  actorType: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  createdAt: string;
+};
+
+export type DocumentAuditTrail = {
+  total: number;
+  page: number;
+  limit: number;
+  items: DocumentAuditEvent[];
 };
 
 export type PublicArtifact = {
@@ -153,14 +229,11 @@ export function archiveDocument(documentId: string) {
 }
 
 export function deleteDocument(documentId: string) {
-  return legalApi(`/v1/legal/documents/${documentId}`, { method: "DELETE" });
+  return legalApi<{ storageDeleted: boolean }>(`/v1/legal/documents/${documentId}`, { method: "DELETE" });
 }
 
 export async function getDocument(documentId: string) {
-  const documents = await listDocuments();
-  const document = documents.find((item) => item.id === documentId);
-  if (!document) throw new Error("Documento no encontrado.");
-  return document;
+  return legalApi<LegalDocument>(`/v1/legal/documents/${documentId}`);
 }
 
 export function getDocumentDraft(documentId: string) {
@@ -198,6 +271,31 @@ export function publishDraft(documentId: string, payload: PublishDraftPayload) {
 
 export function listVersions(documentId: string) {
   return legalApi<LegalVersion[]>(`/v1/legal/documents/${documentId}/versions`);
+}
+
+export function getVersionContent(documentId: string, versionId: string) {
+  return legalApi<VersionContent>(
+    `/v1/legal/documents/${documentId}/versions/${versionId}/content`,
+  );
+}
+
+export function listDocumentAcceptances(documentId: string) {
+  return legalApi<DocumentAcceptances>(
+    `/v1/legal/documents/${documentId}/acceptances`,
+  );
+}
+
+export function listDocumentAuditEvents(
+  documentId: string,
+  params?: { page?: number; limit?: number },
+) {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString();
+  return legalApi<DocumentAuditTrail>(
+    `/v1/legal/documents/${documentId}/audit-events${suffix ? `?${suffix}` : ""}`,
+  );
 }
 
 export function listDocumentTypes() {

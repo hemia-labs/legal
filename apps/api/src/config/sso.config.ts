@@ -28,7 +28,7 @@ export default registerAs('sso', (): SsoConfig => {
     frontendUrl: env('SSO_FRONTEND_URL') ?? 'http://localhost:5180',
     scope:
       env('SSO_SCOPE') ??
-      `openid profile email offline_access ${productCode}.access`,
+      `openid profile email offline_access ${productCode}.access legal.self.pending.read legal.self.acceptances.create legal.self.acceptances.read`,
     cookieName: env('SSO_COOKIE_NAME') ?? `${productCode}_session`,
     sessionTtlSeconds: Number(env('SSO_SESSION_TTL_SECONDS') ?? 600),
     cookieSecure:
@@ -40,12 +40,6 @@ export default registerAs('sso', (): SsoConfig => {
         env('ACCESS_JWKS_URI') ?? `${accessApiUrl}/.well-known/jwks.json`,
       audience: env('ACCESS_AUDIENCE') ?? 'access-api',
     },
-    service: {
-      apiBaseUrl: accessApiUrl,
-      clientId: env('ACCESS_SERVICE_CLIENT_ID') ?? '',
-      clientSecret: env('ACCESS_SERVICE_CLIENT_SECRET') ?? '',
-      scopes: env('ACCESS_SERVICE_SCOPE') ?? 'product_instances.write',
-    },
     productCode: productCode,
     requireDistributedRefreshLock: true,
     onUserResolved: (user) => Promise.resolve({ internalUserId: user.sub }),
@@ -53,11 +47,7 @@ export default registerAs('sso', (): SsoConfig => {
   return {
     ...config,
     accessEventScope: env('ACCESS_EVENT_SCOPE') ?? 'events.consume',
-    legalAccessRoleMap:
-      env('LEGAL_ACCESS_ROLE_MAP') ??
-      'organization_owner=legal.admin,organization_admin=legal.admin',
   } as SsoConfig & {
     accessEventScope: string;
-    legalAccessRoleMap: string;
   };
 });

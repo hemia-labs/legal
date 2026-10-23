@@ -41,10 +41,20 @@ export class LegalPublication {
   @Column({ name: 'product_id', length: 120 })
   productId: string;
 
-  @Column({ name: 'organization_id', type: 'varchar', length: 120, nullable: true })
+  @Column({
+    name: 'organization_id',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
   organizationId: string | null;
 
-  @Column({ name: 'product_tenant_id', type: 'varchar', length: 120, nullable: true })
+  @Column({
+    name: 'product_tenant_id',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
   productTenantId: string | null;
 
   @Column({ length: 80 })
@@ -86,10 +96,20 @@ export class LegalPublication {
   @Column({ name: 'requested_by_subject_id', length: 160 })
   requestedBySubjectId: string;
 
-  @Column({ name: 'published_by_identity_issuer', type: 'varchar', length: 120, nullable: true })
+  @Column({
+    name: 'published_by_identity_issuer',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
   publishedByIdentityIssuer: string | null;
 
-  @Column({ name: 'published_by_subject_id', type: 'varchar', length: 160, nullable: true })
+  @Column({
+    name: 'published_by_subject_id',
+    type: 'varchar',
+    length: 160,
+    nullable: true,
+  })
   publishedBySubjectId: string | null;
 
   @Column({ name: 'published_at', type: 'timestamptz', nullable: true })

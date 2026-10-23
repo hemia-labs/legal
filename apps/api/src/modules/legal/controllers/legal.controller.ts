@@ -1,10 +1,17 @@
 import {
+  LegalAcceptanceValidationService,
+  type ValidateCheckoutAcceptance,
+} from '../authorization/legal-acceptance-validation.service';
+import { LegalPersonalGuard } from '../authorization/legal-personal.guard';
+import { LegalServiceGuard } from '../authorization/legal-service.guard';
+import {
   BadRequestException,
   Body,
   Controller,
   Delete,
   ForbiddenException,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   MaxFileSizeValidator,
@@ -30,6 +37,7 @@ import {
   AcceptanceExportFilterDto,
   ApplicationFilterDto,
   AuditEventFilterDto,
+  DocumentAuditFilterDto,
   CreateAcceptanceDto,
   CreateApplicationDto,
   CreateDocumentDto,
@@ -58,14 +66,14 @@ export class LegalController {
 
   @Get('issuers')
   @Permissions('legal.issuers.view')
-  listIssuers(@Query() filter: IssuerFilterDto) {
-    return this.service.listIssuers(filter);
+  listIssuers(@Query() filter: IssuerFilterDto, @Req() request: LegalRequest) {
+    return this.service.listIssuers(filter, request.actor);
   }
 
   @Get('issuers/options')
   @Permissions('legal.issuers.view')
-  listIssuerOptions() {
-    return this.service.listIssuerOptions();
+  listIssuerOptions(@Req() request: LegalRequest) {
+    return this.service.listIssuerOptions(request.actor);
   }
 
   @Get('issuers/:id')
@@ -124,8 +132,11 @@ export class LegalController {
 
   @Get('applications')
   @Permissions('legal.applications.view')
-  listApplications(@Query() filter: ApplicationFilterDto) {
-    return this.service.listApplications(filter);
+  listApplications(
+    @Query() filter: ApplicationFilterDto,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.listApplications(filter, request.actor);
   }
 
   @Post('applications')
@@ -181,8 +192,17 @@ export class LegalController {
 
   @Get('documents')
   @Permissions('legal.documents.view')
-  listDocuments(@Query() filter: DocumentFilterDto) {
-    return this.service.listDocuments(filter);
+  listDocuments(
+    @Query() filter: DocumentFilterDto,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.listDocuments(filter, request.actor);
+  }
+
+  @Get('documents/:id')
+  @Permissions('legal.documents.view')
+  getDocument(@Param('id') id: string) {
+    return this.service.getDocument(id);
   }
 
   @Get('document-types')
@@ -215,7 +235,7 @@ export class LegalController {
   }
 
   @Delete('documents/:id')
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @HttpCode(HttpStatus.OK)
   @Permissions('legal.documents.delete')
   deleteDocument(@Param('id') id: string, @Req() request: LegalRequest) {
     return this.service.deleteDocument(id, request.actor);
@@ -231,6 +251,38 @@ export class LegalController {
   @Permissions('legal.versions.view')
   listVersions(@Param('documentId') documentId: string) {
     return this.service.listVersions(documentId);
+  }
+
+  @Get('documents/:documentId/versions/:versionId/content')
+  @Permissions('legal.versions.view')
+  getVersionContent(
+    @Param('documentId') documentId: string,
+    @Param('versionId') versionId: string,
+  ) {
+    return this.service.getVersionContent(documentId, versionId);
+  }
+
+  @Get('documents/:documentId/acceptances')
+  @Permissions('legal.acceptances.view')
+  listDocumentAcceptances(
+    @Param('documentId') documentId: string,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.listDocumentAcceptances(documentId, request.actor);
+  }
+
+  @Get('documents/:documentId/audit-events')
+  @Permissions('legal.audit.view')
+  listDocumentAuditEvents(
+    @Param('documentId') documentId: string,
+    @Query() filter: DocumentAuditFilterDto,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.listDocumentAuditEvents(
+      documentId,
+      filter,
+      request.actor,
+    );
   }
 
   @Get('documents/:documentId/publications/:publicationId')
@@ -249,7 +301,11 @@ export class LegalController {
     @Param('publicationId') publicationId: string,
     @Req() request: LegalRequest,
   ) {
-    return this.service.retryPublication(documentId, publicationId, request.actor);
+    return this.service.retryPublication(
+      documentId,
+      publicationId,
+      request.actor,
+    );
   }
 
   @Post('documents/:documentId/draft')
@@ -303,9 +359,8 @@ export class LegalController {
   previewPublication(
     @Param('documentId') documentId: string,
     @Body() dto: PublishDraftDto,
-    @Req() request: LegalRequest,
   ) {
-    return this.service.previewPublication(documentId, scopePublication(dto, request));
+    return this.service.previewPublication(documentId, dto);
   }
 
   @Post('documents/:documentId/draft/publish')
@@ -315,47 +370,7 @@ export class LegalController {
     @Body() dto: PublishDraftDto,
     @Req() request: LegalRequest,
   ) {
-    return this.service.publishDraft(
-      documentId,
-      scopePublication(dto, request),
-      request.actor,
-    );
-  }
-
-  @Get('me/pending')
-  @Permissions('legal.pending.view')
-  getMyPending(
-    @Query() query: MePendingQueryDto,
-    @Req() request: LegalRequest,
-  ) {
-    return this.service.getMyPending(query, request);
-  }
-
-  @Get('me/guard-check')
-  @Permissions('legal.pending.view')
-  guardCheck(@Query() query: MePendingQueryDto, @Req() request: LegalRequest) {
-    return this.service.guardCheck(query, request);
-  }
-
-  @Post('pending/evaluate')
-  @Permissions('legal.pending.evaluate')
-  evaluatePending(
-    @Body() dto: EvaluatePendingDto,
-    @Req() request: LegalRequest,
-  ) {
-    if (request.actor.actorType !== 'service') {
-      throw new ForbiddenException('Service actor required');
-    }
-    return this.service.evaluatePending(dto);
-  }
-
-  @Post('acceptances')
-  @Permissions('legal.acceptances.create')
-  createAcceptance(
-    @Body() dto: CreateAcceptanceDto,
-    @Req() request: LegalRequest,
-  ) {
-    return this.service.createAcceptance(dto, request);
+    return this.service.publishDraft(documentId, dto, request.actor);
   }
 
   @Get('acceptances/export')
@@ -378,12 +393,6 @@ export class LegalController {
     return exported.body;
   }
 
-  @Get('me/acceptances')
-  @Permissions('legal.acceptances.view')
-  listMyAcceptances(@Req() request: LegalRequest) {
-    return this.service.listMyAcceptances(request);
-  }
-
   @Get('acceptances/:id')
   @Permissions('legal.acceptances.view')
   getAcceptance(@Param('id') id: string, @Req() request: LegalRequest) {
@@ -392,12 +401,15 @@ export class LegalController {
 
   @Get('notifications')
   @Permissions('legal.notifications.view')
-  listNotifications(@Query() filter: NotificationFilterDto) {
-    return this.service.listNotifications(filter);
+  listNotifications(
+    @Query() filter: NotificationFilterDto,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.listNotifications(filter, request.actor);
   }
 
   @Post('notifications/:notificationId/retry')
-  @Permissions('legal.notifications.manage')
+  @Permissions('legal.notifications.retry')
   retryNotification(
     @Param('notificationId') notificationId: string,
     @Req() request: LegalRequest,
@@ -406,7 +418,7 @@ export class LegalController {
   }
 
   @Post('notifications/:notificationId/cancel')
-  @Permissions('legal.notifications.manage')
+  @Permissions('legal.notifications.cancel')
   cancelNotification(
     @Param('notificationId') notificationId: string,
     @Req() request: LegalRequest,
@@ -416,22 +428,12 @@ export class LegalController {
 
   @Get('audit-events')
   @Permissions('legal.audit.view')
-  listAuditEvents(@Query() filter: AuditEventFilterDto) {
-    return this.service.listAuditEvents(filter);
+  listAuditEvents(
+    @Query() filter: AuditEventFilterDto,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.listAuditEvents(filter, request.actor);
   }
-}
-
-function scopePublication(dto: PublishDraftDto, request: LegalRequest): PublishDraftDto {
-  const context = request.legalContext;
-  if (!context) throw new ForbiddenException('Legal organization context required');
-  return {
-    ...dto,
-    rules: (dto.rules ?? []).map((rule) => ({
-      ...rule,
-      organizationId: context.organizationId,
-      productTenantId: context.productTenantId,
-    })),
-  };
 }
 
 @Controller('v1/legal/public')
@@ -481,4 +483,72 @@ async function parseSourceUploadMetadata(metadata?: string) {
   const errors = await validate(dto, { whitelist: true });
   if (errors.length) throw new BadRequestException('Invalid upload metadata');
   return dto;
+}
+
+@Controller('v1/legal')
+@UseGuards(LegalPersonalGuard)
+export class LegalPersonalController {
+  constructor(private readonly service: LegalService) {}
+  @Get('me/pending')
+  @Permissions('legal.self.pending.read')
+  getMyPending(
+    @Query() query: MePendingQueryDto,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.getMyPending(query, request);
+  }
+
+  @Get('me/guard-check')
+  @Permissions('legal.self.pending.read')
+  guardCheck(@Query() query: MePendingQueryDto, @Req() request: LegalRequest) {
+    return this.service.guardCheck(query, request);
+  }
+
+  @Post('acceptances')
+  @Permissions('legal.self.acceptances.create')
+  createAcceptance(
+    @Body() dto: CreateAcceptanceDto,
+    @Req() request: LegalRequest,
+  ) {
+    return this.service.createAcceptance(dto, request);
+  }
+
+  @Get('me/acceptances')
+  @Permissions('legal.self.acceptances.read')
+  listMyAcceptances(@Req() request: LegalRequest) {
+    return this.service.listMyAcceptances(request);
+  }
+}
+
+@Controller('v1/legal')
+@UseGuards(LegalServiceGuard)
+export class LegalTechnicalController {
+  constructor(
+    private readonly service: LegalService,
+    private readonly acceptances: LegalAcceptanceValidationService,
+  ) {}
+  @Header('Cache-Control', 'no-store')
+  @HttpCode(HttpStatus.OK)
+  @Post('acceptances/validate')
+  @Permissions('legal.acceptances.validate')
+  validateAcceptance(
+    @Body() dto: ValidateCheckoutAcceptance,
+    @Req() request: LegalRequest,
+  ) {
+    return this.acceptances.validate(dto, request.personalContext!.roles);
+  }
+  @Post('pending/evaluate')
+  @Permissions('legal.pending.evaluate')
+  evaluatePending(
+    @Body() dto: EvaluatePendingDto,
+    @Req() request: LegalRequest,
+  ) {
+    if (request.actor.actorType !== 'service') {
+      throw new ForbiddenException('Service actor required');
+    }
+    return this.service.evaluatePending({
+      ...dto,
+      roles: request.personalContext!.roles,
+    });
+  }
 }

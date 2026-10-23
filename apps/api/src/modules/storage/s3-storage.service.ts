@@ -1,6 +1,13 @@
-import { ConflictException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import {
   DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectVersionsCommand,
+  type ObjectIdentifier,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
@@ -8,7 +15,11 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
-import type { StorageConfig, StorageObjectRef } from './types/storage.types';
+import {
+  buildDocumentPrefix,
+  type StorageConfig,
+  type StorageObjectRef,
+} from './types/storage.types';
 
 type StoredMemoryObject = StorageObjectRef & { body: Buffer };
 
@@ -50,7 +61,11 @@ export class S3StorageService {
 
     if (!this.client) {
       const existing = this.memory.get(key);
-      if (existing && existing.sha256 === sha256 && existing.contentType === contentType) {
+      if (
+        existing &&
+        existing.sha256 === sha256 &&
+        existing.contentType === contentType
+      ) {
         return withoutBody(existing);
       }
       if (existing) {
@@ -118,7 +133,7 @@ export class S3StorageService {
     };
   }
 
-  async signedDownloadUrl(ref: StorageObjectRef) {
+  async signedDownloadUrl(ref: StorageObjectRef, downloadFileName?: string) {
     const expiresAt = new Date(
       Date.now() + this.config.signedUrlTtlSeconds * 1000,
     );
@@ -135,7 +150,21 @@ export class S3StorageService {
       new GetObjectCommand({
         Bucket: ref.bucket,
         Key: ref.key,
-        ResponseContentType: ref.contentType,
+        ...(downloadFileName
+          ? {
+              ResponseContentDisposition: `attachment; filename="${
+                downloadFileName
+                  .split(/[\\/]/)
+                  .pop()!
+                  .replace(/[^a-zA-Z0-9._-]+/g, '-')
+                  .slice(0, 255) || 'document'
+              }"`,
+            }
+          : {}),
+        ResponseContentType:
+          ref.contentType === 'text/html'
+            ? 'text/html; charset=utf-8'
+            : ref.contentType,
       }),
       { expiresIn: this.config.signedUrlTtlSeconds },
     );
@@ -146,14 +175,16 @@ export class S3StorageService {
   async read(ref: StorageObjectRef): Promise<Buffer> {
     if (!this.client) {
       const stored = this.memory.get(ref.key);
-      if (!stored) throw new ServiceUnavailableException('Storage object not found');
+      if (!stored)
+        throw new ServiceUnavailableException('Storage object not found');
       return Buffer.from(stored.body);
     }
 
     const response = await this.client.send(
       new GetObjectCommand({ Bucket: ref.bucket, Key: ref.key }),
     );
-    if (!response.Body) throw new ServiceUnavailableException('Storage object is empty');
+    if (!response.Body)
+      throw new ServiceUnavailableException('Storage object is empty');
     if ('transformToByteArray' in response.Body) {
       return Buffer.from(await response.Body.transformToByteArray());
     }
@@ -175,6 +206,61 @@ export class S3StorageService {
     );
   }
 
+  async deleteDocumentFiles(documentId: string): Promise<boolean> {
+    const prefix = buildDocumentPrefix(documentId);
+    const bucket = this.requireBucket();
+    if (!this.client) {
+      for (const key of this.memory.keys()) {
+        if (key.startsWith(prefix)) this.memory.delete(key);
+      }
+      return true;
+    }
+
+    // Include replaced drafts and historical S3 versions, not only current DB references.
+    const objects: ObjectIdentifier[] = [];
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    let truncated: boolean;
+    do {
+      const page = await this.client.send(
+        new ListObjectVersionsCommand({
+          Bucket: bucket,
+          Prefix: prefix,
+          KeyMarker: keyMarker,
+          VersionIdMarker: versionIdMarker,
+        }),
+      );
+      for (const version of page.Versions ?? []) {
+        if (!version.Key?.startsWith(prefix)) {
+          throw new Error('S3 returned an object outside the document prefix');
+        }
+        objects.push({ Key: version.Key, VersionId: version.VersionId });
+      }
+      truncated = page.IsTruncated === true;
+      if (truncated && !page.NextKeyMarker) {
+        throw new Error('S3 did not return the next version marker');
+      }
+      keyMarker = page.NextKeyMarker;
+      versionIdMarker = page.NextVersionIdMarker;
+    } while (truncated);
+
+    let complete = true;
+    for (let offset = 0; offset < objects.length; offset += 1000) {
+      const result = await this.client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: {
+            Objects: objects.slice(offset, offset + 1000),
+            Quiet: true,
+          },
+        }),
+      );
+      if (result.Errors?.length) complete = false;
+    }
+    // Keep delete markers so retained or protected versions never become visible again.
+    return complete;
+  }
+
   private requireBucket() {
     if (!this.config.bucket) {
       throw new ServiceUnavailableException('S3 storage is not configured');
@@ -183,13 +269,20 @@ export class S3StorageService {
   }
 }
 
-function withoutBody({ body: _body, ...ref }: StoredMemoryObject): StorageObjectRef {
+function withoutBody({
+  body: _body,
+  ...ref
+}: StoredMemoryObject): StorageObjectRef {
+  void _body;
   return ref;
 }
 
 function isMissingObject(error: unknown) {
   if (!error || typeof error !== 'object') return false;
-  const candidate = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+  const candidate = error as {
+    name?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
   return (
     candidate.name === 'NotFound' ||
     candidate.name === 'NoSuchKey' ||

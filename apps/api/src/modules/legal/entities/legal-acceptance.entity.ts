@@ -12,6 +12,17 @@ import { LegalDocumentVersion } from './legal-document-version.entity';
 import { LegalAcceptanceRule } from './legal-acceptance-rule.entity';
 
 @Entity('acceptances')
+@Index(
+  'IDX_legal_acceptances_identity_org_version_rule',
+  [
+    'identityIssuer',
+    'subjectId',
+    'organizationId',
+    'documentVersionId',
+    'acceptanceRuleId',
+  ],
+  { unique: true, where: '"organization_id" IS NOT NULL' },
+)
 @Index('IDX_legal_acceptances_actor', [
   'identityIssuer',
   'subjectId',
@@ -26,6 +37,12 @@ import { LegalAcceptanceRule } from './legal-acceptance-rule.entity';
 export class LegalAcceptance {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Column({ name: 'external_identity_source_id', type: 'uuid', nullable: true })
+  externalIdentitySourceId: string | null;
+
+  @Column({ name: 'registering_client_id', type: 'uuid', nullable: true })
+  registeringClientId: string | null;
 
   @Column({ name: 'issuer_id', type: 'uuid' })
   issuerId: string;

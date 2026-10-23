@@ -1,3 +1,4 @@
+import { byteSizeTransformer } from './byte-size.transformer';
 import {
   Column,
   CreateDateColumn,
@@ -7,9 +8,13 @@ import {
 } from 'typeorm';
 
 @Entity('publication_assets')
-@Index('IDX_legal_publication_assets_publication_kind_unique', ['publicationId', 'kind'], {
-  unique: true,
-})
+@Index(
+  'IDX_legal_publication_assets_publication_kind_unique',
+  ['publicationId', 'kind'],
+  {
+    unique: true,
+  },
+)
 export class LegalPublicationAsset {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -26,13 +31,22 @@ export class LegalPublicationAsset {
   @Column({ name: 's3_object_key', length: 1024 })
   s3ObjectKey: string;
 
-  @Column({ name: 's3_version_id', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 's3_version_id',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   s3VersionId: string | null;
 
   @Column({ name: 'content_type', length: 120 })
   contentType: string;
 
-  @Column({ name: 'size_bytes', type: 'bigint' })
+  @Column({
+    name: 'size_bytes',
+    type: 'bigint',
+    transformer: byteSizeTransformer,
+  })
   sizeBytes: number;
 
   @Column({ name: 'sha256', length: 64 })

@@ -6,9 +6,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, FileText, LoaderCircle } from "lucide-react";
 import { useLegalSession } from "@/components/app-shell";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { PageHeading } from "@/components/page-heading";
+import { Alert } from "@/components/zuno/alert";
+import { Button } from "@/components/zuno/button";
+import { Card, CardContent, CardFooter } from "@/components/zuno/card";
+import { Input } from "@/components/zuno/input";
 import { FileDropzone } from "@/components/ui/file-dropzone";
 import {
   Select,
@@ -17,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@/components/zuno/skeleton";
 import { legalApi, LegalApiError } from "@/lib/legal-api";
 import { listApplications, type Application } from "@/services/application.service";
 import {
@@ -157,32 +159,23 @@ export default function NewDocumentPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <header>
-        <Button
-          render={<Link href="/documents" />}
-          nativeButton={false}
-          variant="ghost"
-          className="mb-3 -ml-3 h-12"
-        >
-          <ArrowLeft className="size-4" aria-hidden="true" />
-          Documentos
+      <div>
+        <Button render={<Link href="/documents" />} nativeButton={false} variant="ghost" className="mb-3 -ml-3">
+          <ArrowLeft className="size-4" aria-hidden="true" /> Documentos
         </Button>
-        <h1 className="text-2xl font-bold text-heading">Nuevo documento</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Define los datos básicos del documento legal.
-        </p>
-      </header>
+        <PageHeading title="Nuevo documento" description="Define los datos básicos del documento legal." />
+      </div>
 
       {error && (
-        <div role="alert" className="rounded-lg border border-error bg-error-subtle px-4 py-3 text-sm font-medium text-error">
+        <Alert variant="destructive" className="font-medium">
           {error}
           {createdDocumentId && (
-            <Button render={<Link href={`/documents/${createdDocumentId}`} />} nativeButton={false} variant="outline" className="mt-3 h-12">
+            <Button render={<Link href={`/documents/${createdDocumentId}`} />} nativeButton={false} variant="outline" className="mt-3">
               <FileText className="size-4" aria-hidden="true" />
               Continuar al documento
             </Button>
           )}
-        </div>
+        </Alert>
       )}
 
       <form className="min-w-0" onSubmit={(event) => void submit(event)}>

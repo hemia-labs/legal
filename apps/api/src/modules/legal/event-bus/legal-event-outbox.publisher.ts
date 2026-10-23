@@ -14,6 +14,7 @@ const OUTBOUND_TYPES = [
   'product.organization_product.provisioned.v1',
   'product.organization_product.provisioning_failed.v1',
 ];
+const PUBLISH_LEASE_MS = 30_000;
 const BACKOFF_MINUTES = [1, 5, 15];
 
 @Injectable()
@@ -63,6 +64,16 @@ export class LegalEventOutboxPublisher
           status: 'pending',
           nextRunAt: LessThanOrEqual(now),
         },
+        {
+          eventType: In(OUTBOUND_TYPES),
+          status: 'processing',
+          nextRunAt: IsNull(),
+        },
+        {
+          eventType: In(OUTBOUND_TYPES),
+          status: 'processing',
+          nextRunAt: LessThanOrEqual(now),
+        },
       ],
       order: { createdAt: 'ASC' },
       take: limit,
@@ -75,32 +86,61 @@ export class LegalEventOutboxPublisher
   }
 
   private async processEvent(event: OutboxEvent) {
-    event.status = 'processing';
-    await this.outbox.save(event);
+    const claim = await this.outbox
+      .createQueryBuilder()
+      .update(OutboxEvent)
+      .set({
+        status: 'processing',
+        nextRunAt: new Date(Date.now() + PUBLISH_LEASE_MS),
+        attemptCount: () => 'attempt_count + 1',
+      })
+      .where('id = :id', { id: event.id })
+      .andWhere(
+        "status IN ('pending', 'processing') AND (next_run_at IS NULL OR next_run_at <= NOW())",
+      )
+      .andWhere('event_type IN (:...types)', { types: OUTBOUND_TYPES })
+      .returning('attempt_count')
+      .execute();
+    if (!claim.affected) return;
+    const attempt = (claim.raw as Array<{ attempt_count: number }>)[0]
+      .attempt_count;
+    const finish = (values: Parameters<Repository<OutboxEvent>['update']>[1]) =>
+      this.outbox
+        .createQueryBuilder()
+        .update(OutboxEvent)
+        .set(values)
+        .where('id = :id AND status = :status AND attempt_count = :attempt', {
+          id: event.id,
+          status: 'processing',
+          attempt,
+        })
+        .execute();
 
     try {
       await this.bus.publish(event.eventType, event.payload, {
+        eventId: event.id,
+        occurredAt: event.createdAt.toISOString(),
         correlationId: event.correlationId ?? event.traceId,
         traceParent: event.traceParent ?? undefined,
         subject: event.subject ?? undefined,
       });
-      event.status = 'processed';
-      event.processedAt = new Date();
-      event.nextRunAt = null;
-      await this.outbox.save(event);
+      await finish({
+        status: 'processed',
+        processedAt: new Date(),
+        nextRunAt: null,
+      });
       this.logger.log(`Published ${event.eventType} (${event.id})`);
     } catch (error) {
-      event.attemptCount += 1;
-      event.status =
-        event.attemptCount >= BACKOFF_MINUTES.length ? 'failed' : 'pending';
-      event.nextRunAt =
-        event.status === 'pending'
-          ? new Date(
-              Date.now() + BACKOFF_MINUTES[event.attemptCount - 1] * 60_000,
-            )
-          : null;
-      await this.outbox.save(event);
-      throw error;
+      const exhausted = attempt >= BACKOFF_MINUTES.length;
+      await finish({
+        status: exhausted ? 'failed' : 'pending',
+        nextRunAt: exhausted
+          ? null
+          : new Date(Date.now() + BACKOFF_MINUTES[attempt - 1] * 60_000),
+      });
+      this.logger.error(
+        `Publish failed for ${event.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 }

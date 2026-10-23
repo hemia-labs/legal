@@ -1,3 +1,5 @@
+import legalServiceConfig from './config/legal-service.config';
+import legalIntegrationsConfig from './config/legal-integrations.config';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
@@ -19,6 +21,8 @@ import { SecretsModule } from './modules/secrets/secrets.module';
       isGlobal: true,
       envFilePath: ['.env', '.env.local'],
       load: [
+        legalServiceConfig,
+        legalIntegrationsConfig,
         databaseConfig,
         redisConfig,
         ssoConfig,
