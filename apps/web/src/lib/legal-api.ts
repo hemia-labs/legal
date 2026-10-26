@@ -1,4 +1,4 @@
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3017";
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export class LegalApiError extends Error {
   constructor(
@@ -50,7 +50,7 @@ export async function legalApiBlob(path: string): Promise<Blob> {
 }
 
 export function getApiBaseUrl() {
-  return apiBaseUrl;
+  return process.env.LEGAL_API_URL ?? (apiBaseUrl || "http://localhost:3017");
 }
 
 export async function legalLogout(): Promise<void> {
@@ -76,7 +76,7 @@ export async function legalLogout(): Promise<void> {
 }
 
 function redirectToLogin(): never {
-  const loginUrl = new URL("/auth/login", apiBaseUrl);
+  const loginUrl = new URL("/auth/login", apiBaseUrl || window.location.origin);
   loginUrl.searchParams.set(
     "returnTo",
     window.location.pathname + window.location.search,

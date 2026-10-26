@@ -1,3 +1,4 @@
+import { envFilePath } from './config/env-file';
 import legalServiceConfig from './config/legal-service.config';
 import legalIntegrationsConfig from './config/legal-integrations.config';
 import { Module } from '@nestjs/common';
@@ -19,7 +20,7 @@ import { SecretsModule } from './modules/secrets/secrets.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: ['.env', '.env.local'],
+      envFilePath,
       load: [
         legalServiceConfig,
         legalIntegrationsConfig,

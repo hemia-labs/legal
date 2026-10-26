@@ -1,5 +1,5 @@
 {
-  "name": "nextjs-nestjs",
+  "name": "hemia-legal",
   "private": true,
   "workspaces": [
     "apps/*"
@@ -9,6 +9,15 @@
     "build": "bun run --filter '*' build",
     "dev:web": "bun run --cwd apps/web dev",
     "dev:api": "bun run --cwd apps/api start:dev",
-    "test": "bun run --cwd apps/api test && bun run --cwd apps/web test"
+    "test": "bun run --cwd apps/api test && bun run --cwd apps/web test",
+    "ci": "bash scripts/legal-checks.sh",
+    "changeset": "changeset",
+    "version:legal": "node scripts/version-legal.mjs",
+    "test:release": "node --test test/release/*.test.mjs",
+    "test:deploy": "python3 -m unittest discover -s test/deploy -p 'test_*.py'"
+  },
+  "packageManager": "bun@1.4.4",
+  "devDependencies": {
+    "@changesets/cli": "2.31.0"
   }
 }

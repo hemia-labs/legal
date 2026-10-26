@@ -1,0 +1,179 @@
+name: Legal release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Retry an unpublished version committed on main: legal-vMAJOR.MINOR.PATCH'
+        type: string
+        required: true
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: legal-release-main
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  classify:
+    if: github.repository == 'hemia-labs/legal' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.batch.outputs.release }}
+      tag: ${{ steps.batch.outputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Identify an Legal version-only merge
+        id: batch
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ "$EVENT_NAME" == 'workflow_dispatch' ]]; then
+            node scripts/legal-version.mjs retry "$REQUESTED_TAG"
+          else
+            node scripts/legal-version.mjs classify "$BASE_SHA"
+          fi
+
+  version-pr:
+    needs: [classify, checks]
+    if: needs.classify.outputs.release != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.4'
+      - run: bun install --frozen-lockfile
+      - name: Find pending Legal changesets
+        id: changesets
+        run: |
+          node scripts/legal-version.mjs pending
+      - name: Create a GitHub App token when configured
+        id: app-token
+        if: steps.changesets.outputs.pending == 'true' && vars.RELEASE_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: legal
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Apply Legal changesets
+        if: steps.changesets.outputs.pending == 'true'
+        run: |
+          bun run version:legal
+          node scripts/legal-version.mjs notes > "$RUNNER_TEMP/legal-release-notes.md"
+      - name: Check that this version PR update is still current
+        id: current-version
+        if: steps.changesets.outputs.pending == 'true'
+        run: node scripts/release-current.mjs check
+      - name: Create or update the Legal version PR
+        id: version-update
+        continue-on-error: true
+        if: steps.changesets.outputs.pending == 'true' && steps.current-version.outputs.current == 'true'
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        with:
+          token: ${{ steps.app-token.outputs.token || github.token }}
+          base: main
+          branch: changeset-release/legal
+          title: 'chore(legal): release application version'
+          commit-message: 'chore(legal): release application version'
+          body-path: ${{ runner.temp }}/legal-release-notes.md
+          add-paths: |
+            apps/api/package.json
+            apps/web/package.json
+            apps/api/CHANGELOG.md
+            apps/web/CHANGELOG.md
+            bun.lock
+            .changeset/*.md
+      - name: Preserve failures unless main advanced during the update
+        if: steps.version-update.outcome == 'failure'
+        run: node scripts/release-current.mjs recover
+
+  checks:
+    needs: classify
+    if: needs.classify.outputs.release != 'true'
+    uses: ./.github/workflows/legal-ci.yml
+
+  publish:
+    needs: [classify, checks]
+    if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.release == 'true' }}
+    environment: prod
+    outputs:
+      release_tag: ${{ needs.classify.outputs.tag }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.4'
+      - name: Test Legal and its production images
+        run: bash scripts/legal-checks.sh
+      - name: Join Tailscale with GitHub OIDC
+        uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4
+        with:
+          oauth-client-id: ${{ vars.TS_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+          tags: tag:hemia-ci
+      - name: Publish images and immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.classify.outputs.tag }}
+          REGISTRY_HOST: ${{ vars.REGISTRY_HOST }}
+          REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${REGISTRY_HOST:?Missing REGISTRY_HOST}" "${REGISTRY_USERNAME:?Missing REGISTRY_USERNAME}" "${REGISTRY_PASSWORD:?Missing REGISTRY_PASSWORD}"
+          export DOCKER_CONFIG="$RUNNER_TEMP/legal-registry-docker"
+          install -d -m 700 "$DOCKER_CONFIG"
+          trap 'docker logout "$REGISTRY_HOST" >/dev/null 2>&1 || true; rm -rf -- "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" -u "$REGISTRY_USERNAME" --password-stdin
+          python3 scripts/legal-publish.py "$RELEASE_TAG" "$RUNNER_TEMP/legal-release"
+          echo "Release ready: $RELEASE_TAG. The next job checks whether automatic deployment is enabled in prod." >> "$GITHUB_STEP_SUMMARY"
+
+  auto-deploy:
+    needs: publish
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/legal-deploy.yml
+    with:
+      operation: deploy
+      release_tag: ${{ needs.publish.outputs.release_tag }}
+      automatic: true
+    secrets: inherit

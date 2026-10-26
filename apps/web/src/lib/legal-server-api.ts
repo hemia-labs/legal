@@ -32,7 +32,7 @@ export async function legalServerApi<T = unknown>(
 }
 
 function redirectToLogin(requestHeaders: Headers): never {
-  const loginUrl = new URL("/auth/login", getApiBaseUrl());
+  const loginUrl = new URL("/auth/login", "http://legal.local");
   const raw = requestHeaders.get("x-next-url") ?? requestHeaders.get("next-url") ?? "/";
 
   try {
@@ -42,5 +42,5 @@ function redirectToLogin(requestHeaders: Headers): never {
     loginUrl.searchParams.set("returnTo", "/");
   }
 
-  redirect(loginUrl.toString());
+  redirect(`${loginUrl.pathname}${loginUrl.search}`);
 }
