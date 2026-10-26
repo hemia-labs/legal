@@ -32,6 +32,8 @@ import { isDatabaseSecret, type DatabaseSecret } from './types/database.types';
             path.join(__dirname, '..', '**', '*.entity.js'),
           ],
           synchronize: false,
+          migrationsRun: false,
+          migrations: [path.join(__dirname, 'migrations', '*.{ts,js}')],
         };
 
         if (!config.get<boolean>('secrets.enabled', false)) {

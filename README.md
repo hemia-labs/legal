@@ -52,3 +52,7 @@ Todas las pruebas están en [`test/`](test/README.md). Ejecutar `bun run test` d
 ## Sistemas
 
 El catálogo de Sistemas y sus esquemas se administran desde Console; Legal conserva los datos y valida su uso en aceptaciones externas. Ver [contrato, migración y despliegue](apps/api/SYSTEMS.md).
+
+## CI, releases y producción
+
+Ver [DEPLOY.md](DEPLOY.md) para el pipeline, las imágenes, la configuración de GitHub/servidor y las operaciones explícitas de migración, deploy y rollback. Ejecutar `bun run ci` con Node 24, Bun 1.4.4 y Docker para validar el mismo flujo que Actions.

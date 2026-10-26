@@ -1,6 +1,6 @@
 {
   "name": "api",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "",
   "author": "",
   "private": true,
@@ -26,7 +26,8 @@
     "test:targets:docker": "bash ../../test/api/integration/target-validation.docker.sh",
     "test:authorization:docker": "bash ../../test/api/integration/legal-authorization.docker.sh",
     "test:external:docker": "bash ../../test/api/integration/legal-external-acceptance.docker.sh",
-    "test:e2e:isolated": "node ../../test/api/e2e/run-isolated.cjs"
+    "test:e2e:isolated": "node ../../test/api/e2e/run-isolated.cjs",
+    "migration:run:prod": "node node_modules/typeorm/cli.js migration:run -d dist/data-source.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",

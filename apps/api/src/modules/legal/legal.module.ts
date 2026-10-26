@@ -1,3 +1,4 @@
+import { LegalHealthController } from './health.controller';
 import {
   SystemCatalogController,
   SystemOptionsController,
@@ -83,6 +84,7 @@ import { LegalEventBusHealthController } from './event-bus/legal-event-bus-healt
     ]),
   ],
   controllers: [
+    LegalHealthController,
     SystemCatalogController,
     SystemOptionsController,
     ServiceClientsController,

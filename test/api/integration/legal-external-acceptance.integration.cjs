@@ -17,7 +17,7 @@ async function main(){
  await db.initialize();
  try {
  const allMigrations=db.migrations;
- db.migrations=allMigrations.filter(m=>!['SystemCatalog1792627200000','SystemServices1792627201000','VerificationServiceApproval1792627202000','CapabilityFunctions1792713600000','SystemConnectionFunctions1792800000000','CapabilityFieldFunctions1792886400000','LegalCollectorIntrospection1792972800000'].includes(m.constructor.name));
+ db.migrations=allMigrations.filter(m=>!['SystemCatalog1792627200000','SystemServices1792627201000','VerificationServiceApproval1792627202000','CapabilityFunctions1792713600000','SystemConnectionFunctions1792800000000','CapabilityFieldFunctions1792886400000','LegalCollectorIntrospection1792972800000','SubscriptionManagementCapability1793062800000'].includes(m.constructor.name));
  await db.runMigrations();
  db.migrations=allMigrations;
  const issuer=randomUUID(),app=randomUUID(),organization=randomUUID(),subject=randomUUID(),sessionId=randomUUID();

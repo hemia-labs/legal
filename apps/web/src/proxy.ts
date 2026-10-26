@@ -1,11 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const sessionCookieName =
-  process.env.NEXT_PUBLIC_SSO_COOKIE_NAME ?? "legal_session";
-const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3017";
+const sessionCookieName = process.env.SSO_COOKIE_NAME ?? "legal_session";
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+  if (
+    pathname.startsWith("/v1/") ||
+    pathname.startsWith("/health/") ||
+    (pathname.startsWith("/auth/") && pathname !== "/auth/error")
+  ) {
+    const backend = process.env.LEGAL_API_URL ?? "http://localhost:3017";
+    return NextResponse.rewrite(new URL(`${pathname}${search}`, backend));
+  }
 
   if (pathname !== "/auth/error" && request.nextUrl.searchParams.has("error")) {
     const errorUrl = new URL("/auth/error", request.url);
@@ -17,7 +23,7 @@ export function proxy(request: NextRequest) {
   if (isPublicRoute(pathname) || !request.cookies.get(sessionCookieName)?.value) {
     if (isPublicRoute(pathname)) return NextResponse.next();
 
-    const loginUrl = new URL("/auth/login", backendUrl);
+    const loginUrl = new URL("/auth/login", request.url);
     loginUrl.searchParams.set("returnTo", `${pathname}${search}`);
     return NextResponse.redirect(loginUrl);
   }
@@ -26,7 +32,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next|.*\\..*).*)"],
+  matcher: ["/v1/:path*", "/health/:path*", "/auth/:path*", "/((?!api|_next|.*\\..*).*)"],
 };
 
 function isPublicRoute(pathname: string) {

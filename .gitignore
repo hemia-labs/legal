@@ -8,3 +8,8 @@ dist/
 events.log.jsonl
 docs/
 .codegraph
+**/.env
+**/.env.*
+!**/.env.example
+**/tsconfig.tsbuildinfo
+**/__pycache__/
