@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { ForbiddenException } from '@nestjs/common';
 import { LegalContextService } from '../../../../apps/api/src/modules/legal/session/legal-context.service';
@@ -47,7 +48,7 @@ function claims() {
     ],
   };
 }
-function fixture() {
+function fixture(mode: 'roles' | 'authenticated' = 'roles') {
   const values = new Map<string, unknown>([['sso:session:session', {}]]);
   const store = {
     get: jest.fn((key: string) => Promise.resolve(values.get(key) ?? null)),
@@ -88,10 +89,14 @@ function fixture() {
       status: 'active',
     }),
   };
+  const config = new ConfigService({
+    sso: { issuer: expected.issuer },
+    authorization: { mode },
+  });
   const service = new LegalContextService(
     redis as never,
     client as never,
-    { getOrThrow: () => expected.issuer } as never,
+    config,
     store as never,
   );
   const request = {
@@ -117,7 +122,7 @@ function fixture() {
       ],
     },
   };
-  return { service, request, client, redis, tenants };
+  return { service, request, client, redis, tenants, config };
 }
 describe('Explicit Legal context', () => {
   afterEach(() => jest.useRealTimers());
@@ -253,5 +258,48 @@ describe('Legal integration manager versioned scopes', () => {
     ).toThrow();
     c.assignments[0].resource_scope = { type: 'legal_global', ids: [] };
     expect(() => validateLegalContext(c, expected)).toThrow();
+  });
+});
+
+describe('Temporary authenticated Legal mode', () => {
+  it('allows an eligible authenticated member with no role assignments and keeps only selection in the session', async () => {
+    const f = fixture('authenticated');
+    f.client.resolveSystemContext.mockResolvedValue({
+      ...claims(),
+      catalog_version: 2,
+      assignments: [],
+    });
+    const context = await f.service.select(f.request as never, org);
+    expect(context.authorization.assignments).toEqual([]);
+    expect(context.authorization.authenticatedOrganizationId).toBe(org);
+    expect(context.permissions).toContain('legal.issuers.create');
+    expect(context.permissions).toContain('legal.documents.delete');
+    expect(
+      JSON.parse((f.redis.eval.mock.calls as unknown[][])[0][3] as string),
+    ).toEqual({ organizationId: org });
+  });
+  it('separates the read cache for each mode and does not reuse assignment-free claims after rollback', async () => {
+    const f = fixture('authenticated');
+    f.client.resolveSystemContext.mockResolvedValue({
+      ...claims(),
+      catalog_version: 2,
+      assignments: [],
+    });
+    await f.service.require(f.request as never);
+    await f.service.require(f.request as never);
+    expect(f.client.resolveSystemContext).toHaveBeenCalledTimes(1);
+    f.config.set('authorization.mode', 'roles');
+    await expect(f.service.require(f.request as never)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(f.client.resolveSystemContext).toHaveBeenCalledTimes(2);
+  });
+  it('keeps membership and enabled-product eligibility checks before granting actions', async () => {
+    const f = fixture('authenticated');
+    f.request.accessContext.organizations[0].membership_status = 'suspended';
+    await expect(f.service.require(f.request as never)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(f.client.resolveSystemContext).not.toHaveBeenCalled();
   });
 });

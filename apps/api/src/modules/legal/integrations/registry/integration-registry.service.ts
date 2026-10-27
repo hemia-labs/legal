@@ -7,7 +7,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { DataSource, EntityManager } from 'typeorm';
 import type { LegalRequest } from '../../../../common/types/legal-request';
-import { grantsFor } from '../../authorization/legal-authorization';
+import {
+  LegalAuthorization,
+  grantsFor,
+  consumerOrganizationsAllowed,
+} from '../../authorization/legal-authorization';
 import {
   serviceUrl,
   resolveVerificationService,
@@ -106,21 +110,46 @@ export class IntegrationRegistryService {
           g.resource_scope.ids.includes(row.application_id)),
     );
   }
+  private async consumerAllowed(
+    req: LegalRequest,
+    row: ExternalSource,
+    manager: DataSource | EntityManager = this.db,
+    lock = false,
+  ) {
+    if (!req.actor?.authorization?.authenticatedOrganizationId) return true;
+    const organizations = await manager.query<
+      Array<{ organization_id: string }>
+    >(
+      `SELECT organization_id FROM external_identity_source_organizations WHERE source_id=$1${lock ? ' FOR SHARE' : ''}`,
+      [row.id],
+    );
+    return consumerOrganizationsAllowed(
+      req.actor.authorization,
+      organizations.map((organization) => organization.organization_id),
+    );
+  }
+
   async list(req: LegalRequest) {
     if (!grantsFor(req.actor?.authorization, 'legal.integrations.view').length)
       throw new ForbiddenException();
     const rows: ExternalSource[] = await this.db.query(
       `SELECT s.*,sy.enabled AS system_enabled,sy.configuration->'legalAcceptances'->>'identityIssuer' AS identity_issuer,sy.configuration->'legalAcceptances'->>'productCode' AS product_code,(SELECT service->>'url' FROM jsonb_array_elements(sy.services) service WHERE service->>'code'=sy.configuration->'legalAcceptances'->>'contextService' AND service->>'enabled'='true') AS context_url FROM external_identity_sources s JOIN systems sy ON sy.id=s.system_id ORDER BY s.name,s.id`,
     );
-    return Promise.all(
+    const visible = await Promise.all(
       rows
         .filter((row) => this.allowed(req, 'legal.integrations.view', row))
-        .map((row) => this.project(row)),
+        .map(async (row) =>
+          (await this.consumerAllowed(req, row))
+            ? this.project(row, this.db, req.actor.authorization)
+            : null,
+        ),
     );
+    return visible.filter((row) => row !== null);
   }
   private async project(
     row: ExternalSource,
     manager: DataSource | EntityManager = this.db,
+    authorization?: LegalAuthorization,
   ) {
     const clients: Record<string, unknown>[] = await manager.query(
       'SELECT oauth_issuer AS "oauthIssuer",client_id AS "clientId",roles,enabled FROM external_identity_source_clients WHERE source_id=$1 ORDER BY oauth_issuer,client_id',
@@ -130,6 +159,15 @@ export class IntegrationRegistryService {
       'SELECT organization_id AS "organizationId",enabled FROM external_identity_source_organizations WHERE source_id=$1 ORDER BY organization_id',
       [row.id],
     );
+    if (
+      !consumerOrganizationsAllowed(
+        authorization,
+        organizations.map((organization) =>
+          String(organization.organizationId),
+        ),
+      )
+    )
+      throw new ForbiddenException('Integration outside consumer scope');
     const documents: { document_id: string }[] = await manager.query(
       'SELECT document_id FROM external_identity_source_documents WHERE source_id=$1 ORDER BY position',
       [row.id],
@@ -242,6 +280,8 @@ export class IntegrationRegistryService {
         : [];
       if (id && !old)
         throw new ForbiddenException('Integration outside operator scope');
+      if (old && !(await this.consumerAllowed(req, old, m, true)))
+        throw new ForbiddenException('Integration outside consumer scope');
       const permission = id
         ? 'legal.integrations.edit'
         : 'legal.integrations.create';
@@ -289,7 +329,9 @@ export class IntegrationRegistryService {
             'Selecciona documentos públicos publicados con HTML y una regla de aceptación vigente.',
           );
       }
-      const before = old ? await this.project(old, m) : null;
+      const before = old
+        ? await this.project(old, m, req.actor.authorization)
+        : null;
       let saved: ExternalSource;
       try {
         [saved] = old
@@ -314,6 +356,14 @@ export class IntegrationRegistryService {
             'El sistema ya tiene una integración. Edita la existente.',
           );
         throw e;
+      }
+      const selectedOrganizationId =
+        req.actor?.authorization?.authenticatedOrganizationId;
+      if (!old && selectedOrganizationId) {
+        await m.query(
+          'INSERT INTO external_identity_source_organizations(source_id,organization_id,enabled) VALUES($1,$2,true)',
+          [saved.id, selectedOrganizationId],
+        );
       }
       await m.query(
         'DELETE FROM external_identity_source_documents WHERE source_id=$1',
@@ -344,7 +394,7 @@ export class IntegrationRegistryService {
         product_code: settings.productCode,
         context_url: settings.contextUrl,
       });
-      const after = await this.project(saved, m);
+      const after = await this.project(saved, m, req.actor.authorization);
       await this.audit(
         m,
         req,
@@ -361,7 +411,11 @@ export class IntegrationRegistryService {
         'SELECT * FROM external_identity_sources WHERE id=$1 FOR UPDATE',
         [id],
       );
-      if (!row || !this.allowed(req, 'legal.integrations.disable', row))
+      if (
+        !row ||
+        !this.allowed(req, 'legal.integrations.disable', row) ||
+        !(await this.consumerAllowed(req, row, m, true))
+      )
         throw new ForbiddenException();
       await m.query(
         'UPDATE external_identity_sources SET enabled=false,updated_at=now() WHERE id=$1',

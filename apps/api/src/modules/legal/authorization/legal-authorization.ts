@@ -1,3 +1,4 @@
+import type { AuthorizationMode } from '../../../config/authorization.config';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { LEGAL_ROLES } from './legal-role-catalog';
 
@@ -10,7 +11,15 @@ export type LegalAssignment = {
   valid_from: number;
   expires_at: number | null;
 };
+export type LegalGrant = Pick<
+  LegalAssignment,
+  'resource_scope' | 'consumer_scope'
+> & {
+  role_code?: string;
+  managesCatalog?: boolean;
+};
 export type LegalAuthorization = {
+  authenticatedOrganizationId?: string;
   assignments: LegalAssignment[];
   expiresAt: number;
 };
@@ -40,6 +49,7 @@ export function validateLegalContext(
     organizationId: string;
     membershipId: string;
   },
+  mode: AuthorizationMode = 'roles',
 ): LegalAuthorization {
   if (
     claims.contract_version !== 1 ||
@@ -87,10 +97,20 @@ export function validateLegalContext(
     claims.exp <= claims.iat ||
     claims.exp > claims.iat + 300 ||
     !Array.isArray(claims.assignments) ||
-    !claims.assignments.length ||
+    (mode === 'roles'
+      ? !claims.assignments.length
+      : claims.assignments.length !== 0) ||
     claims.assignments.length > 64
   )
     deny();
+  if (mode === 'authenticated') {
+    if (claims.catalog_version !== 2) deny();
+    return {
+      assignments: [],
+      expiresAt: claims.exp,
+      authenticatedOrganizationId: expected.organizationId,
+    };
+  }
   const assignments: LegalAssignment[] = [];
   const seen = new Set<string>();
   let targetCount = 0;
@@ -168,9 +188,26 @@ export function validateLegalContext(
 export function grantsFor(
   auth: LegalAuthorization | undefined,
   permission: string,
-): LegalAssignment[] {
+): LegalGrant[] {
   const now = Date.now() / 1000;
   if (!auth || auth.expiresAt <= now) deny();
+  if (auth.authenticatedOrganizationId) {
+    if (
+      !uuid(auth.authenticatedOrganizationId) ||
+      !allPermissions().includes(permission)
+    )
+      deny();
+    return [
+      {
+        resource_scope: { type: 'legal_global', ids: [] },
+        consumer_scope: {
+          type: 'organizations',
+          organization_ids: [auth.authenticatedOrganizationId],
+        },
+        managesCatalog: true,
+      },
+    ];
+  }
   const grants = auth.assignments.filter(
     (a) =>
       a.valid_from <= now &&
@@ -187,6 +224,14 @@ export function grantsFor(
 export function permissionsForAuthorization(
   auth: LegalAuthorization,
 ): string[] {
+  if (auth.authenticatedOrganizationId) {
+    if (
+      !uuid(auth.authenticatedOrganizationId) ||
+      auth.expiresAt <= Date.now() / 1000
+    )
+      deny();
+    return allPermissions();
+  }
   return [
     ...new Set(
       auth.assignments.flatMap(
@@ -195,4 +240,23 @@ export function permissionsForAuthorization(
       ),
     ),
   ];
+}
+
+function allPermissions(): string[] {
+  return [...new Set(LEGAL_ROLES.flatMap((role) => [...role.permissions]))];
+}
+
+// Authenticated-mode humans may not delegate broader consumer access to a machine.
+export function consumerOrganizationsAllowed(
+  auth: LegalAuthorization | undefined,
+  organizationIds: string[],
+): boolean {
+  const selected = auth?.authenticatedOrganizationId;
+  return (
+    !selected ||
+    (organizationIds.length > 0 &&
+      organizationIds.every(
+        (id) => id.toLowerCase() === selected.toLowerCase(),
+      ))
+  );
 }

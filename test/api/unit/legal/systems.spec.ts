@@ -883,3 +883,209 @@ it('requires collector introspection even without payment receiver and prevents 
     'permisos de todas sus funciones',
   );
 });
+
+describe('authenticated integration consumer scope', () => {
+  const selected = randomUUID(),
+    foreign = randomUUID();
+  const req = {
+    actor: {
+      ...actor,
+      authorization: {
+        assignments: [],
+        expiresAt: Math.floor(Date.now() / 1000) + 300,
+        authenticatedOrganizationId: selected,
+      },
+    },
+  } as LegalRequest;
+  const source = {
+    id: randomUUID(),
+    system_id: systemId,
+    issuer_id: issuerId,
+    application_id: appId,
+    enabled: true,
+    code: 'balanz',
+    name: 'Balanz',
+  };
+  it.each([{ ids: [] }, { ids: [foreign] }, { ids: [selected, foreign] }])(
+    'rejects disabling global or foreign integrations %j',
+    async ({ ids }) => {
+      const query = jest.fn((sql: string) =>
+        sql.startsWith('SELECT * FROM external_identity_sources')
+          ? [source]
+          : sql.startsWith('SELECT organization_id')
+            ? ids.map((organization_id) => ({ organization_id }))
+            : [],
+      );
+      const db = {
+        transaction: (work: (m: unknown) => unknown) => work({ query }),
+      } as unknown as DataSource;
+      const registry = new IntegrationRegistryService(db, config, {} as never);
+      await expect(registry.disable(req, source.id)).rejects.toThrow();
+      expect(query.mock.calls.some(([sql]) => sql.startsWith('UPDATE'))).toBe(
+        false,
+      );
+      expect(query.mock.calls.some(([sql]) => sql.endsWith('FOR SHARE'))).toBe(
+        true,
+      );
+    },
+  );
+  it('filters global and foreign integrations from human listing', async () => {
+    const rows = [[], [foreign], [selected, foreign], [selected]].map(
+      (ids, i) => ({ ...source, id: String(i), ids }),
+    );
+    const query = jest.fn((sql: string, params: string[]) => {
+      if (sql.startsWith('SELECT s.*,sy.enabled')) return rows;
+      const row = rows.find((row) => row.id === params[0]);
+      if (sql.startsWith('SELECT organization_id FROM'))
+        return row!.ids.map((organization_id) => ({ organization_id }));
+      if (sql.startsWith('SELECT organization_id AS'))
+        return row!.ids.map((organizationId) => ({
+          organizationId,
+          enabled: true,
+        }));
+      return [];
+    });
+    const registry = new IntegrationRegistryService(
+      { query } as unknown as DataSource,
+      config,
+      {} as never,
+    );
+    await expect(registry.list(req)).resolves.toEqual([
+      expect.objectContaining({ id: '3' }),
+    ]);
+  });
+  it.each([{ ids: [] }, { ids: [foreign] }, { ids: [selected, foreign] }])(
+    'rejects editing global or foreign integrations %j',
+    async ({ ids }) => {
+      const f = fixture();
+      const query = jest.fn((sql: string) => {
+        if (sql.startsWith('SELECT a.id,a.issuer_id'))
+          return [{ id: appId, issuer_id: issuerId, name: 'Balanz' }];
+        if (sql.startsWith('SELECT * FROM external_identity_sources'))
+          return [source];
+        if (sql.startsWith('SELECT organization_id FROM'))
+          return ids.map((organization_id) => ({ organization_id }));
+        return [];
+      });
+      const db = {
+        transaction: (work: (m: unknown) => unknown) => work({ query }),
+      } as unknown as DataSource;
+      const registry = new IntegrationRegistryService(db, config, {
+        get: jest.fn().mockResolvedValue(f.row),
+        clients: jest.fn().mockResolvedValue([client]),
+      } as never);
+      await expect(
+        registry.save(
+          req,
+          { systemId, applicationId: appId, documentIds: [docId] },
+          source.id,
+        ),
+      ).rejects.toThrow();
+      expect(
+        query.mock.calls.some(([sql]) => /^(UPDATE|INSERT|DELETE)/.test(sql)),
+      ).toBe(false);
+    },
+  );
+  it('creates organization restriction atomically before enabling machine clients', async () => {
+    const f = fixture();
+    const query = jest.fn((sql: string, ..._params: unknown[]) => {
+      void _params;
+      if (sql.startsWith('SELECT a.id,a.issuer_id'))
+        return [{ id: appId, issuer_id: issuerId, name: 'Balanz' }];
+      if (sql.startsWith('SELECT d.id')) return [{ id: docId }];
+      if (sql.startsWith('INSERT INTO external_identity_sources'))
+        return [source];
+      if (sql.startsWith('SELECT organization_id AS'))
+        return [{ organizationId: selected, enabled: true }];
+      return [];
+    });
+    const db = {
+      transaction: (work: (m: unknown) => unknown) => work({ query }),
+    } as unknown as DataSource;
+    const registry = new IntegrationRegistryService(db, config, {
+      get: jest.fn().mockResolvedValue(f.row),
+      clients: jest.fn().mockResolvedValue([client]),
+    } as never);
+    await expect(
+      registry.save(req, {
+        systemId,
+        applicationId: appId,
+        documentIds: [docId],
+      }),
+    ).resolves.toMatchObject({
+      organizations: [{ organizationId: selected, enabled: true }],
+    });
+    const scopeIndex = query.mock.calls.findIndex(([sql]) =>
+      sql.startsWith('INSERT INTO external_identity_source_organizations'),
+    );
+    const clientsIndex = query.mock.calls.findIndex(([sql]) =>
+      sql.startsWith('INSERT INTO external_identity_source_clients'),
+    );
+    expect(scopeIndex).toBeGreaterThan(-1);
+    expect(clientsIndex).toBeGreaterThan(scopeIndex);
+    expect(query.mock.calls[scopeIndex]).toEqual([
+      expect.any(String),
+      [source.id, selected],
+    ]);
+  });
+});
+
+it('saves catalog metadata without changing existing machine policies in authenticated mode without human binding', async () => {
+  const modeConfig = new ConfigService({
+    sso: { issuer: actor.identityIssuer },
+    legalIntegrations: { production: false },
+    authorization: { mode: 'authenticated' },
+  });
+  const f = fixture(true, modeConfig);
+  await expect(
+    f.service.save(
+      { ...draft, name: 'Updated metadata' },
+      { ...actor, authorization: undefined },
+      systemId,
+    ),
+  ).resolves.toMatchObject({ name: 'Updated metadata' });
+  expect(
+    f.query.mock.calls.some(
+      ([sql]) =>
+        sql.startsWith('UPDATE external_identity_source_clients') ||
+        sql.startsWith('INSERT INTO external_identity_source_clients'),
+    ),
+  ).toBe(false);
+  expect(
+    f.query.mock.calls.some(([sql]) =>
+      sql.startsWith('INSERT INTO system_clients'),
+    ),
+  ).toBe(true);
+});
+it('limits implicit machine policy synchronization to exclusively selected organization sources', async () => {
+  const selected = randomUUID();
+  const modeConfig = new ConfigService({
+    sso: { issuer: actor.identityIssuer },
+    legalIntegrations: { production: false },
+    authorization: { mode: 'authenticated' },
+  });
+  const f = fixture(true, modeConfig);
+  await f.service.save(
+    draft,
+    {
+      ...actor,
+      authorization: {
+        assignments: [],
+        expiresAt: Math.floor(Date.now() / 1000) + 300,
+        authenticatedOrganizationId: selected,
+      },
+    },
+    systemId,
+  );
+  const sync = f.query.mock.calls.filter(
+    ([sql]) =>
+      sql.startsWith('UPDATE external_identity_source_clients') ||
+      sql.startsWith('INSERT INTO external_identity_source_clients'),
+  );
+  expect(sync).toHaveLength(2);
+  for (const [sql, args] of sync) {
+    expect(sql).toContain('own.organization_id=$2');
+    expect(sql).toContain('other.organization_id<>$2');
+    expect(args).toEqual([systemId, selected]);
+  }
+});

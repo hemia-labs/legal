@@ -1,8 +1,5 @@
 import { Raw } from 'typeorm';
-import type {
-  LegalAuthorization,
-  LegalAssignment,
-} from './legal-authorization';
+import type { LegalAuthorization, LegalGrant } from './legal-authorization';
 import { grantsFor } from './legal-authorization';
 
 export type LegalTable =
@@ -29,7 +26,8 @@ export function scopePredicate(
     permission.endsWith('.cancel');
   const parts = grants.map((grant, index) => {
     const r = grant.resource_scope;
-    const managesCatalog = grant.role_code === 'legal.catalog_manager';
+    const managesCatalog =
+      grant.managesCatalog || grant.role_code === 'legal.catalog_manager';
     const issuerState =
       historical || managesCatalog ? '' : " AND si.status = 'active'";
     const applicationState =
@@ -78,11 +76,7 @@ EXISTS (SELECT 1 FROM acceptances ev WHERE t.entity_type = 'legal_acceptance' AN
   return { sql: `${live}${relation}(${parts.join(' OR ')})`, parameters };
 }
 // Scope filtering remains in SQL; LegalConsumerAccessService verifies every returned organization with Access before serialization or notification mutations.
-function consumerPredicate(
-  grant: LegalAssignment,
-  index: number,
-  alias: string,
-) {
+function consumerPredicate(grant: LegalGrant, index: number, alias: string) {
   const scope = grant.consumer_scope;
   if (!['organizations', 'all_organizations'].includes(scope.type))
     return 'FALSE';
