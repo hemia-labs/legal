@@ -1,5 +1,11 @@
 # api
 
+## 0.3.0
+
+### Minor Changes
+
+- 35d725d: Add an explicit, reversible authenticated-user action mode for Legal while preserving verified SSO, active memberships and products, consumer organization isolation, and service authorization.
+
 ## 0.2.1
 
 ### Patch Changes
