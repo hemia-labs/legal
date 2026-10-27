@@ -6,7 +6,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { DataSource, EntityManager } from 'typeorm';
 import type { LegalRequest } from '../../../common/types/legal-request';
-import { grantsFor } from '../authorization/legal-authorization';
+import {
+  grantsFor,
+  consumerOrganizationsAllowed,
+} from '../authorization/legal-authorization';
 import { LegalServiceClient } from '../entities/legal-service-client.entity';
 import {
   parseServicePolicy,
@@ -25,15 +28,20 @@ export class ServiceClientsService {
     policy: ServicePolicyDto,
   ) {
     const assignments = grantsFor(req.actor?.authorization, permission);
-    return policy.grants.every((g) =>
-      assignments.some(
-        (a) =>
-          a.resource_scope.type === 'legal_global' ||
-          (a.resource_scope.type === 'issuers' &&
-            a.resource_scope.ids.includes(g.issuerId)) ||
-          (a.resource_scope.type === 'applications' &&
-            a.resource_scope.ids.includes(g.applicationId)),
-      ),
+    return policy.grants.every(
+      (g) =>
+        consumerOrganizationsAllowed(
+          req.actor?.authorization,
+          g.organizationIds,
+        ) &&
+        assignments.some(
+          (a) =>
+            a.resource_scope.type === 'legal_global' ||
+            (a.resource_scope.type === 'issuers' &&
+              a.resource_scope.ids.includes(g.issuerId)) ||
+            (a.resource_scope.type === 'applications' &&
+              a.resource_scope.ids.includes(g.applicationId)),
+        ),
     );
   }
   async list(req: LegalRequest) {
@@ -93,9 +101,9 @@ export class ServiceClientsService {
         JSON.stringify([dto.oauthIssuer, dto.clientId]),
       ]);
       const repository = m.getRepository(LegalServiceClient);
-      const old = await repository.findOneBy({
-        oauthIssuer: dto.oauthIssuer,
-        clientId: dto.clientId,
+      const old = await repository.findOne({
+        where: { oauthIssuer: dto.oauthIssuer, clientId: dto.clientId },
+        lock: { mode: 'pessimistic_write' },
       });
       const permission = old
         ? 'legal.integrations.edit'

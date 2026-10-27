@@ -137,3 +137,18 @@ bun run --cwd apps/api build
 ```
 
 Todas las pruebas viven en [`test/`](../../test/README.md). Los módulos agrupan Redis, sesión, eventos y las responsabilidades de aceptación/registro de integraciones; los contratos HTTP se conservan.
+
+
+## Modo temporal de acciones de Legal
+
+`HEMIA_AUTHORIZATION_MODE=roles` es el valor predeterminado y conserva las asignaciones de roles explícitas.
+
+Para habilitar temporalmente todas las acciones de usuarios humanos elegibles, configurar `HEMIA_AUTHORIZATION_MODE=authenticated` en el backend de Legal **y** en Access. Es válido en local y producción y requiere reiniciar/recrear los servicios. Esta configuración no contiene secretos.
+
+El modo no evita el login SSO, las firmas y bindings del contexto, la expiración, la membresía activa, el producto habilitado, los controles de servicio a servicio ni las validaciones de datos. Access debe emitir el contrato Legal v1/catalog v2 con `assignments: []`; Legal no inventa ni persiste roles o asignaciones. Los catálogos legales compartidos quedan disponibles y la evidencia de aceptaciones y notificaciones permanece limitada a la organización seleccionada.
+
+Legal devuelve los permisos de su catálogo al frontend únicamente tras validar un contexto vigente. Las entradas de caché se separan por modo y los contextos se validan también después de una lectura de caché.
+
+Para revertir, restaurar `HEMIA_AUTHORIZATION_MODE=roles` en Legal y Access y reiniciar/recrear ambos. El modo estricto rechaza contextos sin asignaciones. No se necesitan migraciones, seeds ni cambios de roles en la base.
+
+En modo `authenticated`, la administración humana de clientes de servicio e integraciones conserva la organización seleccionada: las políticas globales o de otras organizaciones no se muestran ni se pueden modificar. Las integraciones nuevas guardan su restricción de organización en la misma transacción. La autorización de máquinas conserva sus políticas existentes.

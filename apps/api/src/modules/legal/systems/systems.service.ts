@@ -438,17 +438,34 @@ export class SystemsService {
             c.capabilityCode,
           ],
         );
-      // Keep source client IDs stable: historical evidence references them.
-      await m.query(
-        'UPDATE external_identity_source_clients SET enabled=false WHERE source_id IN (SELECT id FROM external_identity_sources WHERE system_id=$1)',
-        [saved.id],
-      );
-      await m.query(
-        `INSERT INTO external_identity_source_clients(source_id,oauth_issuer,client_id,roles,enabled)
-        SELECT s.id,c.oauth_issuer,c.client_id,ARRAY(SELECT role FROM unnest(c.roles) role WHERE role IN ('collector','validator')),c.enabled FROM external_identity_sources s JOIN system_clients c ON c.system_id=s.system_id WHERE s.system_id=$1 AND c.capability_code='legalAcceptances' AND c.roles && ARRAY['collector','validator']::text[]
-        ON CONFLICT(source_id,oauth_issuer,client_id) DO UPDATE SET roles=excluded.roles,enabled=excluded.enabled`,
-        [saved.id],
-      );
+      // Catalog edits must not implicitly broaden existing machine policies.
+      const authenticatedMode =
+        this.config.get<string>('authorization.mode', 'roles') ===
+        'authenticated';
+      const selectedOrganization =
+        actor.authorization?.authenticatedOrganizationId;
+      const boundHuman =
+        selectedOrganization &&
+        actor.authorization!.expiresAt > Math.floor(Date.now() / 1000);
+      if (!authenticatedMode || boundHuman) {
+        const sourceScope = authenticatedMode
+          ? ' AND EXISTS (SELECT 1 FROM external_identity_source_organizations own WHERE own.source_id=s.id AND own.organization_id=$2) AND NOT EXISTS (SELECT 1 FROM external_identity_source_organizations other WHERE other.source_id=s.id AND other.organization_id<>$2)'
+          : '';
+        const parameters = authenticatedMode
+          ? [saved.id, selectedOrganization]
+          : [saved.id];
+        // Keep source client IDs stable: historical evidence references them.
+        await m.query(
+          `UPDATE external_identity_source_clients SET enabled=false WHERE source_id IN (SELECT s.id FROM external_identity_sources s WHERE s.system_id=$1${sourceScope})`,
+          parameters,
+        );
+        await m.query(
+          `INSERT INTO external_identity_source_clients(source_id,oauth_issuer,client_id,roles,enabled)
+          SELECT s.id,c.oauth_issuer,c.client_id,ARRAY(SELECT role FROM unnest(c.roles) role WHERE role IN ('collector','validator')),c.enabled FROM external_identity_sources s JOIN system_clients c ON c.system_id=s.system_id WHERE s.system_id=$1${sourceScope} AND c.capability_code='legalAcceptances' AND c.roles && ARRAY['collector','validator']::text[]
+          ON CONFLICT(source_id,oauth_issuer,client_id) DO UPDATE SET roles=excluded.roles,enabled=excluded.enabled`,
+          parameters,
+        );
+      }
       await this.audit(m, actor, 'legal.system.save', saved.id, {
         before: old,
         after: saved,

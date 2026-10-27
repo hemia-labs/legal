@@ -1,3 +1,4 @@
+import authorizationConfig from './config/authorization.config';
 import { envFilePath } from './config/env-file';
 import legalServiceConfig from './config/legal-service.config';
 import legalIntegrationsConfig from './config/legal-integrations.config';
@@ -22,6 +23,7 @@ import { SecretsModule } from './modules/secrets/secrets.module';
       isGlobal: true,
       envFilePath,
       load: [
+        authorizationConfig,
         legalServiceConfig,
         legalIntegrationsConfig,
         databaseConfig,

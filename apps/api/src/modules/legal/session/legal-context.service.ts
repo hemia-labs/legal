@@ -1,3 +1,4 @@
+import type { AuthorizationMode } from '../../../config/authorization.config';
 import {
   ConflictException,
   ForbiddenException,
@@ -214,12 +215,16 @@ export class LegalContextService {
       organizationId: stored.organizationId,
       membershipId: organization.membershipId,
     };
+    const mode = this.config.get<AuthorizationMode>(
+      'authorization.mode',
+      'roles',
+    );
     try {
       const claims = await this.contexts.resolve(
         {
           sessionId: request.ssoAuth?.cookie ?? '',
           ...expected,
-          product: 'legal',
+          product: mode === 'authenticated' ? 'legal:authenticated' : 'legal',
           audience: 'legal-api',
         },
         !['GET', 'HEAD'].includes(request.method),
@@ -232,11 +237,11 @@ export class LegalContextService {
             product_code: 'legal',
             audience: 'legal-api',
           });
-          validateLegalContext(fresh, expected);
+          validateLegalContext(fresh, expected, mode);
           return fresh;
         },
       );
-      const authorization = validateLegalContext(claims, expected);
+      const authorization = validateLegalContext(claims, expected, mode);
       return {
         ...stored,
         contextVersion: claims.context_version as number,
