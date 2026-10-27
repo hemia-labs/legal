@@ -56,20 +56,24 @@ export class IntegrationClientsService {
     const endpoint = new URL(
       this.config.getOrThrow<string>('legalIntegrations.directoryUrl'),
     );
-    endpoint.pathname = endpoint.pathname.replace(
-      /oauth-clients\/?$/,
-      'oauth-scopes',
+    const responses = await Promise.all(
+      ['oauth-scopes', 'oauth-apis'].map((catalog) => {
+        const url = new URL(endpoint);
+        url.pathname = url.pathname.replace(/oauth-clients\/?$/, catalog);
+        return fetch(url, {
+          redirect: 'error',
+          signal: AbortSignal.timeout(5000),
+          headers: { authorization: `Bearer ${token}` },
+        });
+      }),
     );
-    const response = await fetch(endpoint, {
-      redirect: 'error',
-      signal: AbortSignal.timeout(5000),
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (!response.ok)
+    if (responses.some((response) => !response.ok))
       throw new ServiceUnavailableException(
         'Catálogo de permisos OAuth no disponible.',
       );
-    const entries: unknown = await response.json();
+    const [entries, apis]: unknown[] = await Promise.all(
+      responses.map(async (response): Promise<unknown> => response.json()),
+    );
     if (
       !Array.isArray(entries) ||
       entries.some(
@@ -77,19 +81,58 @@ export class IntegrationClientsService {
           !s ||
           typeof s !== 'object' ||
           !('code' in s) ||
-          !('audience' in s) ||
-          !('enabled' in s) ||
-          !('resource' in s) ||
           typeof s.code !== 'string' ||
-          typeof s.audience !== 'string' ||
+          !('name' in s) ||
+          typeof s.name !== 'string' ||
+          !('enabled' in s) ||
           typeof s.enabled !== 'boolean' ||
-          (s.resource !== null && typeof s.resource !== 'string'),
+          !('kind' in s) ||
+          !['api', 'protocol'].includes(String(s.kind)),
+      ) ||
+      !Array.isArray(apis) ||
+      apis.some(
+        (a: unknown) =>
+          !a ||
+          typeof a !== 'object' ||
+          !('audience' in a) ||
+          typeof a.audience !== 'string' ||
+          !('resource' in a) ||
+          (a.resource !== null && typeof a.resource !== 'string') ||
+          !('enabled' in a) ||
+          typeof a.enabled !== 'boolean' ||
+          !('scopes' in a) ||
+          !Array.isArray(a.scopes) ||
+          !a.scopes.every((code: unknown) => typeof code === 'string'),
       )
     )
       throw new ServiceUnavailableException(
         'Catálogo de permisos OAuth inválido.',
       );
-    return entries as import('../../systems/capability-functions').ScopeEntry[];
+    const scopes = entries as {
+      code: string;
+      name: string;
+      enabled: boolean;
+      kind: string;
+    }[];
+    const resources = apis as {
+      audience: string;
+      resource: string | null;
+      enabled: boolean;
+      scopes: string[];
+    }[];
+    return resources.flatMap((api) =>
+      scopes
+        .filter(
+          (scope) => scope.kind === 'api' && api.scopes.includes(scope.code),
+        )
+        .map((scope) => ({
+          code: scope.code,
+          name: scope.name,
+          audience: api.audience,
+          resource: api.resource,
+          enabled: scope.enabled && api.enabled,
+        })),
+    );
   }
 
   async directory() {

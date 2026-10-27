@@ -95,4 +95,96 @@ describe('IntegrationClientsService', () => {
       new IntegrationClientsService(config, tokens).list(req),
     ).rejects.toThrow('OAuth client directory unavailable');
   });
+  it('joins canonical scopes with API destinations and ignores protocol scopes', async () => {
+    const fetch = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { code: 'shared.read', name: 'Read', enabled: true, kind: 'api' },
+            { code: 'disabled', name: 'Disabled', enabled: false, kind: 'api' },
+            { code: 'openid', name: 'OpenID', enabled: true, kind: 'protocol' },
+          ]),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              audience: 'legal-api',
+              resource: 'https://legal.test',
+              enabled: true,
+              scopes: ['shared.read', 'disabled', 'openid'],
+            },
+            {
+              audience: 'other-api',
+              resource: 'https://other.test',
+              enabled: false,
+              scopes: ['shared.read'],
+            },
+          ]),
+        ),
+      );
+    await expect(
+      new IntegrationClientsService(config, tokens).scopeCatalog(),
+    ).resolves.toEqual([
+      {
+        code: 'shared.read',
+        name: 'Read',
+        audience: 'legal-api',
+        resource: 'https://legal.test',
+        enabled: true,
+      },
+      {
+        code: 'disabled',
+        name: 'Disabled',
+        audience: 'legal-api',
+        resource: 'https://legal.test',
+        enabled: false,
+      },
+      {
+        code: 'shared.read',
+        name: 'Read',
+        audience: 'other-api',
+        resource: 'https://other.test',
+        enabled: false,
+      },
+    ]);
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      new URL('https://identity.test/oauth-scopes'),
+      expect.any(Object),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      new URL('https://identity.test/oauth-apis'),
+      expect.any(Object),
+    );
+  });
+  it('rejects malformed API destinations instead of granting an inferred resource', async () => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify([])))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { audience: 'legal-api', enabled: true, scopes: [] },
+          ]),
+        ),
+      );
+    await expect(
+      new IntegrationClientsService(config, tokens).scopeCatalog(),
+    ).rejects.toThrow('Catálogo de permisos OAuth inválido.');
+  });
+  it('fails closed when either OAuth catalog is unavailable', async () => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response('[]'))
+      .mockResolvedValueOnce(
+        new Response('private upstream response', { status: 403 }),
+      );
+    await expect(
+      new IntegrationClientsService(config, tokens).scopeCatalog(),
+    ).rejects.toThrow('Catálogo de permisos OAuth no disponible.');
+  });
 });
