@@ -17,7 +17,7 @@ async function main(){
  await db.initialize();
  try {
  const allMigrations=db.migrations;
- db.migrations=allMigrations.filter(m=>!['SystemCatalog1792627200000','SystemServices1792627201000','VerificationServiceApproval1792627202000','CapabilityFunctions1792713600000','SystemConnectionFunctions1792800000000','CapabilityFieldFunctions1792886400000','LegalCollectorIntrospection1792972800000','SubscriptionManagementCapability1793062800000'].includes(m.constructor.name));
+ db.migrations=allMigrations.filter(m=>!['SystemCatalog1792627200000','SystemServices1792627201000','VerificationServiceApproval1792627202000','CapabilityFunctions1792713600000','SystemConnectionFunctions1792800000000','CapabilityFieldFunctions1792886400000','LegalCollectorIntrospection1792972800000','SubscriptionManagementCapability1793062800000','PaymentConnectionReadScope1793577600000'].includes(m.constructor.name));
  await db.runMigrations();
  db.migrations=allMigrations;
  const issuer=randomUUID(),app=randomUUID(),organization=randomUUID(),subject=randomUUID(),sessionId=randomUUID();
@@ -43,6 +43,11 @@ async function main(){
  for(const [position,documentId] of docs.entries())await db.query('INSERT INTO external_identity_source_documents(source_id,document_id,position) VALUES($1,$2,$3)',[systemId,documentId,position]);
  db.migrations=allMigrations.filter(m=>m.constructor.name!=='LegalCollectorIntrospection1792972800000');
  await db.runMigrations();
+ const connectionReadScope={audience:'billing-api',code:'billing.integration.connections.read'};
+ const [{functions:paymentFunctions}]=await db.query("SELECT functions FROM system_capabilities WHERE code='payments'");
+ assert.ok(paymentFunctions.length>0);
+ assert.ok(paymentFunctions.every(fn=>fn.scopes.some(scope=>
+  scope.audience===connectionReadScope.audience && scope.code===connectionReadScope.code)));
  const beforeFunctions=(await db.query("SELECT functions FROM system_capabilities WHERE code='legalAcceptances'"))[0].functions;
  db.migrations=allMigrations;
  await db.runMigrations();
