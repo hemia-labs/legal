@@ -2,7 +2,8 @@
   "name": "hemia-legal",
   "private": true,
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
     "dev": "bun run --filter '*' dev",
@@ -14,7 +15,8 @@
     "changeset": "changeset",
     "version:legal": "node scripts/version-legal.mjs",
     "test:release": "node --test test/release/*.test.mjs",
-    "test:deploy": "python3 -m unittest discover -s test/deploy -p 'test_*.py'"
+    "test:deploy": "python3 -m unittest discover -s test/deploy -p 'test_*.py'",
+    "version:legal-sdk": "node scripts/version-legal-sdk.mjs"
   },
   "packageManager": "bun@1.4.4",
   "devDependencies": {

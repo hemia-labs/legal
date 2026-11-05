@@ -1,3 +1,4 @@
+import { changesetTargets } from './changeset-scope.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
@@ -20,8 +21,7 @@ const versionFiles = ['apps/api/package.json', 'apps/web/package.json',
   'apps/api/CHANGELOG.md', 'apps/web/CHANGELOG.md', 'bun.lock'];
 
 export function legalChangeset(source) {
-  const header = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] ?? '';
-  const targets = [...header.matchAll(/^\s*["']?([^"'\s:]+)["']?\s*:\s*(patch|minor|major)\s*$/gm)].map(m => m[1]);
+  const targets = changesetTargets(source);
   return targets.length > 0 && targets.every(name => ['api', 'web'].includes(name));
 }
 

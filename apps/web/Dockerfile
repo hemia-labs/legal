@@ -4,6 +4,7 @@ RUN npm install -g bun@1.4.4
 COPY package.json bun.lock ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/web/package.json ./apps/web/package.json
+COPY packages/sdk/package.json ./packages/sdk/package.json
 RUN bun install --frozen-lockfile
 COPY apps/web ./apps/web
 ENV NEXT_TELEMETRY_DISABLED=1 LEGAL_API_URL=http://api:3017

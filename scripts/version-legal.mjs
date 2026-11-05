@@ -1,3 +1,4 @@
+import { withChangesetScope } from './changeset-scope.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -8,7 +9,9 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const version = name => JSON.parse(readFileSync(join(root, 'apps', name, 'package.json'))).version;
 const before = { api: version('api'), web: version('web') };
 assert.equal(before.api, before.web, 'Legal packages must share a version');
-execFileSync(process.execPath, [join(root, 'node_modules/@changesets/cli/bin.js'), 'version'], { cwd: root, stdio: 'inherit' });
+withChangesetScope('app', () => {
+  execFileSync(process.execPath, [join(root, 'node_modules/@changesets/cli/bin.js'), 'version'], { cwd: root, stdio: 'inherit' });
+});
 assert.equal(version('api'), version('web'), 'Legal packages must share a version');
 assert.notEqual(version('api'), before.api, 'No pending Legal changesets');
 let lock = readFileSync(join(root, 'bun.lock'), 'utf8');
