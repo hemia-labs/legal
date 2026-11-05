@@ -270,6 +270,27 @@ it('keeps operational validation while permitting new capability metadata', () =
   const dto = plainToInstance(SaveSystemDto, { ...draft, configuration: [] });
   expect(validateSync(dto)).not.toHaveLength(0);
 });
+it('permits registration collectors without a session verification service', () => {
+  expect(
+    legalAcceptanceConfiguration(
+      {
+        identityIssuer: settings.identityIssuer,
+        productCode: settings.productCode,
+      },
+      [],
+    ),
+  ).toEqual({
+    identityIssuer: settings.identityIssuer,
+    productCode: settings.productCode,
+    contextUrl: undefined,
+  });
+  expect(() =>
+    legalAcceptanceConfiguration(
+      { ...settings, contextService: 'missing' },
+      [],
+    ),
+  ).toThrow();
+});
 it('saves a system, its OAuth references and audit without changing historical client IDs', async () => {
   const f = fixture();
   await expect(f.service.save(draft, actor)).resolves.toMatchObject({
