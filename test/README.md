@@ -19,7 +19,7 @@ bun run --cwd apps/api test
 bun run --cwd apps/web test
 ```
 
-Las integraciones se ejecutan explícitamente con `bun run --cwd apps/api test:targets:docker`, `test:authorization:docker` o `test:external:docker`. Cada runner mantiene el cwd de la API para resolver los módulos y globs de migraciones, y crea/destruye su contenedor PostgreSQL. No deben apuntar a bases compartidas.
+Las integraciones se ejecutan explícitamente con `bun run --cwd apps/api test:targets:docker`, `test:authorization:docker`, `test:external:docker` o `test:document-sets:docker`. Cada runner mantiene el cwd de la API para resolver los módulos y globs de migraciones, y crea/destruye su contenedor PostgreSQL. No deben apuntar a bases compartidas.
 
 `api/.env.example` conserva una plantilla de configuración E2E; exportar sus valores explícitamente antes de ejecutar la suite. `bun run --cwd apps/api test:e2e` requiere servicios/configuración y una base cuyo nombre incluya `test` o `e2e`. El setup rechaza bases compartidas. No ejecutar migraciones ni seeds al arrancar para preparar estas suites. Las integraciones y E2E quedan fuera del comando unitario habitual.
 

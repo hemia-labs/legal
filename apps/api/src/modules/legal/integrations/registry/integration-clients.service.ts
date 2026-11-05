@@ -13,6 +13,7 @@ type Client = {
   clientId: string;
   audience: string;
   name?: string;
+  description?: string;
   status: string;
   grantTypes: string[];
   scopes: string[];
@@ -187,6 +188,8 @@ export class IntegrationClientsService {
           audience: client.audience,
           serviceDestinations: client.serviceDestinations ?? null,
           name: typeof client.name === 'string' ? client.name : client.clientId,
+          description:
+            typeof client.description === 'string' ? client.description : '',
           oauthIssuer,
           scopes: [
             ...new Set([

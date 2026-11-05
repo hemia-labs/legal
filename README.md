@@ -51,7 +51,7 @@ Todas las pruebas están en [`test/`](test/README.md). Ejecutar `bun run test` d
 
 ## Sistemas
 
-El catálogo de Sistemas y sus esquemas se administran desde Console; Legal conserva los datos y valida su uso en aceptaciones externas. Ver [contrato, migración y despliegue](apps/api/SYSTEMS.md).
+El catálogo de Sistemas y sus esquemas se administran desde Console; Legal conserva los datos y valida su uso en aceptaciones externas. Ver [contrato, migración y despliegue](apps/api/SYSTEMS.md). Para registro, contratación y actualizaciones de políticas, consultar [conjuntos de documentos y evidencia](apps/api/DOCUMENT-SETS.md).
 
 ## CI, releases y producción
 

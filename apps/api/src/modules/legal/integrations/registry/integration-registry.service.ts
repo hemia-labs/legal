@@ -24,19 +24,14 @@ import type { IntegrationRequest } from '../acceptance/integration-auth.guard';
 const publicDocumentTypes = LEGAL_DOCUMENT_TYPES.filter(
   (type) => type.workflow === 'public',
 ).map((type) => type.code);
-// Organization and role eligibility are checked against the actual user at runtime.
+// Document-set policies define acceptance requirements separately from publication.
 const acceptableDocumentSql = `EXISTS (
  SELECT 1 FROM document_versions v
- JOIN acceptance_rules r ON r.version_id=v.id AND r.document_id=d.id
-  AND r.application_id=d.application_id AND r.issuer_id=d.issuer_id
  JOIN publications p ON p.document_version_id=v.id AND p.status='published'
  JOIN publication_assets asset ON asset.publication_id=p.id AND asset.kind='html'
  WHERE v.document_id=d.id AND v.status='published' AND v.content_hash IS NOT NULL
  AND (v.effective_from IS NULL OR v.effective_from<=now())
  AND (v.effective_until IS NULL OR v.effective_until>now())
- AND r.status='active' AND r.acceptance_mode IN ('individual','organization_representative')
- AND (r.acceptance_mode<>'organization_representative' OR r.role IS NOT NULL)
- AND (r.starts_at IS NULL OR r.starts_at<=now()) AND (r.ends_at IS NULL OR r.ends_at>now())
 )`;
 export type ExternalSource = {
   id: string;
@@ -247,15 +242,16 @@ export class IntegrationRegistryService {
         throw new BadRequestException('El sistema está deshabilitado.');
       const legalSettings = system.configuration.legalAcceptances as
         Record<string, unknown> | undefined;
-      resolveVerificationService(
-        system.services,
-        legalSettings?.contextService,
-      );
+      if (legalSettings?.contextService)
+        resolveVerificationService(
+          system.services,
+          legalSettings.contextService,
+        );
       const settings = legalAcceptanceConfiguration(
         system.configuration.legalAcceptances,
         system.services,
       );
-      this.contextUrl(settings.contextUrl);
+      if (settings.contextUrl) this.contextUrl(settings.contextUrl);
       const clients = (await this.systems.clients(system.id, m)).filter(
         (c) =>
           c.capabilityCode === 'legalAcceptances' &&
@@ -326,7 +322,7 @@ export class IntegrationRegistryService {
         );
         if (ready.length !== dto.documentIds.length)
           throw new BadRequestException(
-            'Selecciona documentos públicos publicados con HTML y una regla de aceptación vigente.',
+            'Selecciona documentos públicos publicados con HTML vigente.',
           );
       }
       const before = old

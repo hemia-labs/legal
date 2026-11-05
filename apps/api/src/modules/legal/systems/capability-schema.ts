@@ -251,7 +251,7 @@ export const legalAcceptanceSchema: CapabilitySchema = {
       key: 'contextService',
       label: 'Servicio de verificación',
       type: 'string',
-      required: true,
+      required: false,
       functions: ['collector'],
       format: 'service',
       maxLength: 80,
@@ -275,6 +275,8 @@ export function legalAcceptanceConfiguration(
   return {
     identityIssuer: core.identityIssuer as string,
     productCode: core.productCode as string,
-    contextUrl: resolveService(services, core.contextService).url,
+    contextUrl: core.contextService
+      ? resolveService(services, core.contextService).url
+      : undefined,
   };
 }

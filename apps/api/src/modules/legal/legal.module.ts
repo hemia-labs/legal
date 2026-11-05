@@ -1,3 +1,9 @@
+import { DocumentSetsService } from './integrations/document-sets/document-sets.service';
+import {
+  DocumentSetsController,
+  PublicDocumentSetsController,
+  EvidenceController,
+} from './integrations/document-sets/document-sets.controller';
 import { LegalHealthController } from './health.controller';
 import {
   SystemCatalogController,
@@ -84,6 +90,9 @@ import { LegalEventBusHealthController } from './event-bus/legal-event-bus-healt
     ]),
   ],
   controllers: [
+    DocumentSetsController,
+    PublicDocumentSetsController,
+    EvidenceController,
     LegalHealthController,
     SystemCatalogController,
     SystemOptionsController,
@@ -101,6 +110,7 @@ import { LegalEventBusHealthController } from './event-bus/legal-event-bus-healt
     LegalEventBusHealthController,
   ],
   providers: [
+    DocumentSetsService,
     SystemsService,
     SystemCatalogGuard,
     ServiceClientsService,

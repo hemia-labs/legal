@@ -103,7 +103,7 @@ export class SystemsService {
     }
     if (!allowed) throw new ForbiddenException();
     return this.db.query<Array<{ id: string; name: string; code: string }>>(
-      "SELECT id,name,code FROM systems WHERE enabled AND configuration ? 'legalAcceptances' AND EXISTS(SELECT 1 FROM jsonb_array_elements(systems.services) service WHERE service->>'code'=systems.configuration->'legalAcceptances'->>'contextService' AND service->>'enabled'='true' AND length(service->>'audience')>0) AND EXISTS(SELECT 1 FROM system_clients c WHERE c.system_id=systems.id AND c.enabled AND c.capability_code='legalAcceptances' AND 'collector'=ANY(c.roles)) ORDER BY name,id",
+      "SELECT id,name,code FROM systems WHERE enabled AND configuration ? 'legalAcceptances' AND (NULLIF(systems.configuration->'legalAcceptances'->>'contextService','') IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(systems.services) service WHERE service->>'code'=systems.configuration->'legalAcceptances'->>'contextService' AND service->>'enabled'='true' AND length(service->>'audience')>0)) AND EXISTS(SELECT 1 FROM system_clients c WHERE c.system_id=systems.id AND c.enabled AND c.capability_code='legalAcceptances' AND 'collector'=ANY(c.roles)) ORDER BY name,id",
     );
   }
   async get(id: string, m: DataSource | EntityManager = this.db) {
@@ -197,7 +197,7 @@ export class SystemsService {
         const field = schema.fields.find((f) => f.key === core.key);
         if (
           !field ||
-          !field.required ||
+          (core.required && !field.required) ||
           (field.functions !== undefined &&
             !field.functions.includes('collector')) ||
           field.type !== core.type ||

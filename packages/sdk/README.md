@@ -1,6 +1,6 @@
 # @hemia/legal
 
-Node.js client for the document-set and evidence API. The first workspace version supports reading a published set and recording evidence. It works with CommonJS and ESM.
+Node.js client for the [document-set and evidence API](../../apps/api/DOCUMENT-SETS.md). The first workspace version supports reading a published set and recording evidence. It works with CommonJS and ESM.
 
 ```ts
 import { createLegalClient } from '@hemia/legal';

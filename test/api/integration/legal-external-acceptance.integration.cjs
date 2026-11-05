@@ -17,7 +17,7 @@ async function main(){
  await db.initialize();
  try {
  const allMigrations=db.migrations;
- db.migrations=allMigrations.filter(m=>!['SystemCatalog1792627200000','SystemServices1792627201000','VerificationServiceApproval1792627202000','CapabilityFunctions1792713600000','SystemConnectionFunctions1792800000000','CapabilityFieldFunctions1792886400000','LegalCollectorIntrospection1792972800000','SubscriptionManagementCapability1793062800000','PaymentConnectionReadScope1793577600000'].includes(m.constructor.name));
+ db.migrations=allMigrations.filter(m=>!['SystemCatalog1792627200000','SystemServices1792627201000','VerificationServiceApproval1792627202000','CapabilityFunctions1792713600000','SystemConnectionFunctions1792800000000','CapabilityFieldFunctions1792886400000','LegalCollectorIntrospection1792972800000','SubscriptionManagementCapability1793062800000','DocumentSets1793318400000','PaymentConnectionReadScope1793577600000'].includes(m.constructor.name));
  await db.runMigrations();
  db.migrations=allMigrations;
  const issuer=randomUUID(),app=randomUUID(),organization=randomUUID(),subject=randomUUID(),sessionId=randomUUID();
@@ -83,7 +83,6 @@ async function main(){
  for(const [change,restore] of [
   ["UPDATE document_versions SET status='draft' WHERE id=$1","UPDATE document_versions SET status='published' WHERE id=$1"],
   ["UPDATE document_versions SET effective_from=now()+interval '1 day' WHERE id=$1","UPDATE document_versions SET effective_from=NULL WHERE id=$1"],
-  ["UPDATE acceptance_rules SET status='inactive' WHERE version_id=$1","UPDATE acceptance_rules SET status='active' WHERE version_id=$1"],
   ["UPDATE publications SET status='failed' WHERE document_version_id=$1","UPDATE publications SET status='published' WHERE document_version_id=$1"],
   ["UPDATE publication_assets SET kind='source' WHERE publication_id IN (SELECT id FROM publications WHERE document_version_id=$1)","UPDATE publication_assets SET kind='html' WHERE publication_id IN (SELECT id FROM publications WHERE document_version_id=$1)"],
   ["UPDATE documents SET document_type='nda' WHERE id IN (SELECT document_id FROM document_versions WHERE id=$1)","UPDATE documents SET document_type='terms_and_conditions' WHERE id IN (SELECT document_id FROM document_versions WHERE id=$1)"],
@@ -157,6 +156,13 @@ async function main(){
  assert.equal((await db.query('SELECT count(*)::int n FROM external_identity_source_clients WHERE source_id=$1 AND client_id=$2',[systemId,genericClient.clientId]))[0].n,0);
  assert.equal((await db.query('SELECT id FROM external_identity_source_clients WHERE source_id=$1 AND client_id=$2',[systemId,'balanz-billing-service']))[0].id,originalClientId);
  console.log('PASS generic non-Legal functions, scoped client assignments and isolated legacy Legal source synchronization');
+ // A registration integration needs published documents, not legacy acceptance rules or a callback.
+ await db.query("UPDATE acceptance_rules SET status='inactive'");
+ const registration=await systems.save({code:'signup',name:'Signup only',enabled:true,services:[],configuration:{legalAcceptances:{identityIssuer:'urn:hemia:signup',productCode:'signup'}},clients},actor);
+ const registrationSource=await registry.saveFromCatalog(catalogRequest,{systemId:registration.id,applicationId:app,documentIds:docs});
+ assert.equal(registrationSource.contextUrl,undefined);
+ assert.equal((await registry.catalogOptions(catalogRequest)).documents.length,3);
+ assert.ok((await systems.options({actor})).some(s=>s.id===registration.id));
  console.log('PASS PostgreSQL catalog backfill, stable historical clients, forward-only rollback protection, system disablement, concurrent preparation and acceptance, lost response, payload conflict, source/user/org/client isolation, expiry, changed documents, v2 evidence, per-system service resolution and disabled service rejection');
  }finally{await db.destroy();}
 }

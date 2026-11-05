@@ -10,6 +10,7 @@ bun run --cwd apps/api test:e2e:isolated
 bun run --cwd apps/api test:targets:docker
 bun run --cwd apps/api test:authorization:docker
 bun run --cwd apps/api test:external:docker
+bun run --cwd apps/api test:document-sets:docker
 bun run --cwd apps/web lint
 bun run --cwd apps/web test
 LEGAL_ENV_FILE=/dev/null LEGAL_REVISION="$(git rev-parse HEAD)" docker compose --env-file /dev/null build
