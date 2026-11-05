@@ -78,6 +78,7 @@ describe('IntegrationClientsService', () => {
       {
         clientId: 'collector',
         name: 'Collector',
+        description: '',
         oauthIssuer: 'https://identity.test',
         audience: 'legal-api',
         serviceDestinations: null,
