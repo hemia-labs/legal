@@ -35,15 +35,18 @@ test('retry accepts only the committed shared stable version', () => {
 test('real Changesets produces synchronized packages, lock, changelogs, tag and release notes', () => {
   const dir = mkdtempSync(join(tmpdir(), 'legal-version-'));
   try {
-    for (const folder of ['apps/api', 'apps/web', '.changeset', 'scripts', 'bin']) mkdirSync(join(dir, folder), { recursive: true });
-    for (const path of ['package.json', 'bun.lock', 'apps/api/package.json', 'apps/web/package.json', '.changeset/config.json',
-      'scripts/legal-version.mjs', 'scripts/version-legal.mjs']) copyFileSync(join(root, path), join(dir, path));
+    for (const folder of ['apps/api', 'apps/web', 'packages/sdk', '.changeset', 'scripts', 'bin']) mkdirSync(join(dir, folder), { recursive: true });
+    for (const path of ['package.json', 'bun.lock', 'apps/api/package.json', 'apps/web/package.json', 'packages/sdk/package.json', '.changeset/config.json',
+      'scripts/legal-version.mjs', 'scripts/version-legal.mjs', 'scripts/changeset-scope.mjs']) copyFileSync(join(root, path), join(dir, path));
     symlinkSync(join(root, 'node_modules'), join(dir, 'node_modules'), 'dir');
     const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: 'pipe' }).trim();
     git('init', '-q', '-b', 'main');
     git('add', '.');
     git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'fixture');
     writeFileSync(join(dir, '.changeset/legal.md'), note);
+    const sdkNote = '---\n"@hemia/legal": minor\n---\nSDK release.\n';
+    writeFileSync(join(dir, '.changeset/sdk.md'), sdkNote);
+    const sdkManifest = readFileSync(join(dir, 'packages/sdk/package.json'), 'utf8');
     git('add', '.changeset');
     git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'functional change');
     git('update-ref', 'refs/remotes/origin/main', 'HEAD');
@@ -61,6 +64,8 @@ test('real Changesets produces synchronized packages, lock, changelogs, tag and 
       assert(readFileSync(join(dir, 'apps', name, 'CHANGELOG.md'), 'utf8').includes(`## ${versions[0]}`));
     }
     assert(cli('pending').includes('false'));
+    assert.equal(readFileSync(join(dir, '.changeset/sdk.md'), 'utf8'), sdkNote);
+    assert.equal(readFileSync(join(dir, 'packages/sdk/package.json'), 'utf8'), sdkManifest);
     const base = git('rev-parse', 'HEAD');
     git('add', 'apps', '.changeset', 'bun.lock');
     git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'version');

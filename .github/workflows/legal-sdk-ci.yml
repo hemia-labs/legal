@@ -1,0 +1,50 @@
+name: Legal SDK CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [develop]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      preserve-release-artifact:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: legal-sdk-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.4'
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd packages/sdk test
+      - run: node --test packages/sdk/test/release.test.mjs
+      - name: Validate the package in an isolated consumer
+        env:
+          LEGAL_SDK_RELEASE_DIR: ${{ inputs.preserve-release-artifact && format('{0}/legal-sdk-release', runner.temp) || '' }}
+        run: node scripts/check-legal-sdk-package.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: inputs.preserve-release-artifact
+        with:
+          name: legal-sdk-release
+          path: ${{ runner.temp }}/legal-sdk-release/
+          if-no-files-found: error
+          retention-days: 7

@@ -4,6 +4,7 @@ RUN npm install -g bun@1.4.4
 COPY package.json bun.lock ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/web/package.json ./apps/web/package.json
+COPY packages/sdk/package.json ./packages/sdk/package.json
 
 FROM dependencies AS builder
 RUN bun install --frozen-lockfile
