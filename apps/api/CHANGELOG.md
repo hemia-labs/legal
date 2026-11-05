@@ -1,5 +1,11 @@
 # api
 
+## 0.4.0
+
+### Minor Changes
+
+- 00be5cc: Expose published document sets and immutable acceptance evidence for external applications. Authorized clients can record evidence with stable idempotency keys, evaluate pending documents, read evidence history and validate a receipt against the current set. Apply the document-set migration explicitly before enabling integrations that use these endpoints.
+
 ## 0.3.1
 
 ### Patch Changes
