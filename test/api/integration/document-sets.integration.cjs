@@ -532,7 +532,8 @@ let app;
       verification: 'verified_session',
       requiresMfa: true,
     };
-    assert.equal((await http('PUT', setPath, strong)).status, 200);
+    const strongSet = await http('PUT', setPath, strong);
+    assert.equal(strongSet.status, 200);
     assert.equal(
       (await http('POST', '/v1/legal/integrations/pending/evaluate', query))
         .body.pendingDocuments.length,
@@ -590,6 +591,107 @@ let app;
       (await http('POST', '/v1/legal/integrations/pending/evaluate', query))
         .body.pendingDocuments.length,
       0,
+    );
+    const reviewPath = '/v1/legal/integrations/pending/prepare';
+    const reviewQuery = { ...query, sessionId: session };
+    const noReview = await http('POST', reviewPath, reviewQuery);
+    assert.deepEqual(noReview.body.documents, []);
+    assert.equal(noReview.body.snapshotToken, undefined);
+    const privacyDocument = randomUUID(),
+      privacyVersion = randomUUID();
+    await db.query(
+      "INSERT INTO documents(id,application_id,key,title,locale) VALUES($1,$2,'privacy','Privacy','es-MX')",
+      [privacyDocument, application],
+    );
+    await db.query(
+      'INSERT INTO external_identity_source_documents VALUES($1,$2)',
+      [source, privacyDocument],
+    );
+    await db.query(
+      "INSERT INTO document_versions(id,document_id,version,content_hash) VALUES($1,$2,'1.0.1',$3)",
+      [privacyVersion, privacyDocument, 'c'.repeat(64)],
+    );
+    assert.equal(
+      (
+        await http('PUT', setPath, {
+          ...strong,
+          expectedRevision: strongSet.body.revision,
+          documents: [
+            ...strong.documents,
+            {
+              ...strong.documents[0],
+              documentId: privacyDocument,
+              requiredAction: 'acknowledge',
+            },
+          ],
+        })
+      ).status,
+      200,
+    );
+    assert.equal((await http('GET', publicPath)).body.documents.length, 2);
+    const review = await http('POST', reviewPath, reviewQuery);
+    assert.equal(review.status, 201);
+    assert.deepEqual(
+      review.body.documents.map((d) => d.documentVersionId),
+      [privacyVersion],
+    );
+    const update = {
+      ...secureEvidence,
+      snapshotToken: review.body.snapshotToken,
+      idempotencyKey: randomUUID(),
+      occurredAt: new Date().toISOString(),
+      confirmations: [
+        {
+          documentVersionId: privacyVersion,
+          contentHash: 'c'.repeat(64),
+          action: 'acknowledge',
+          confirmed: true,
+        },
+      ],
+    };
+    const recordPath = '/v1/legal/integrations/evidence';
+    assert.equal(
+      (await http('POST', recordPath, { ...update, subjectId: randomUUID() }))
+        .status,
+      403,
+    );
+    assert.equal(
+      (await http('POST', recordPath, { ...update, sessionId: randomUUID() }))
+        .status,
+      403,
+    );
+    assert.equal(
+      (
+        await http('POST', recordPath, {
+          ...update,
+          confirmations: [
+            ...update.confirmations,
+            ...secureEvidence.confirmations,
+          ],
+        })
+      ).status,
+      409,
+    );
+    const updated = await http('POST', recordPath, update);
+    assert.equal(updated.status, 201, JSON.stringify(updated));
+    assert.equal(
+      (await http('POST', recordPath, update)).body.evidenceId,
+      updated.body.evidenceId,
+    );
+    assert.deepEqual(
+      (await http('POST', reviewPath, reviewQuery)).body.documents,
+      [],
+    );
+    const updatedHistory = (
+      await http('POST', '/v1/legal/integrations/evidence/history', query)
+    ).body.items;
+    assert.deepEqual(
+      updatedHistory[0].documents.map((d) => d.documentVersionId),
+      [privacyVersion],
+    );
+    assert.deepEqual(
+      updatedHistory[1].documents.map((d) => d.documentVersionId),
+      [newVersion],
     );
     liveActor = {
       ...actor,

@@ -63,6 +63,12 @@ type Doc = {
   requireReacceptance: boolean;
   deadline: string | null;
 };
+type PendingReviewOwner = {
+  clientId: string;
+  subjectId: string;
+  organizationId: string | null;
+  sessionId: string | null;
+};
 type Snapshot = {
   id: string;
   set_id: string;
@@ -71,7 +77,9 @@ type Snapshot = {
   set_key: string;
   set_revision: string;
   locale: string;
-  configuration: SaveDocumentSetDto;
+  configuration: SaveDocumentSetDto & {
+    pendingReviewOwner?: PendingReviewOwner;
+  };
   documents: Doc[];
   created_at: Date;
   expires_at: Date;
@@ -313,14 +321,42 @@ export class DocumentSetsService {
     return docs;
   }
   async published(applicationId: string, key: string, locale: string) {
-    const set = await this.set(applicationId, key),
-      documents = await this.documents(set, locale);
-    const fingerprint = hash({ revision: set.revision, locale, documents });
+    const set = await this.set(applicationId, key);
+    return this.prepareSnapshot(set, locale, await this.documents(set, locale));
+  }
+  async preparePending(caller: Caller, dto: EvaluateSetDto) {
+    if (caller.role !== 'collector') throw new ForbiddenException();
+    const set = await this.set(dto.applicationId, dto.documentSetKey);
+    const source = await this.source(caller, set.source_id, dto.organizationId);
+    const { documents } = await this.evaluatePending(set, source, dto);
+    if (!documents.length) {
+      return { documentSetKey: set.key, revision: set.revision, documents: [] };
+    }
+    return this.prepareSnapshot(set, dto.locale, documents, {
+      clientId: source.client_record_id,
+      subjectId: dto.subjectId,
+      organizationId: dto.organizationId ?? null,
+      sessionId: dto.sessionId ?? null,
+    });
+  }
+  private async prepareSnapshot(
+    set: SetRow,
+    locale: string,
+    documents: Doc[],
+    pendingReviewOwner?: PendingReviewOwner,
+  ) {
+    const { application_id: applicationId, key } = set;
+    const fingerprint = hash({
+      revision: set.revision,
+      locale,
+      documents,
+      pendingReviewOwner,
+    });
     const snapshot = await this.db.transaction(async (m) => {
       const current = await this.set(applicationId, key, m, true);
       if (current.revision !== set.revision)
         throw new ConflictException('DOCUMENT_SET_CHANGED');
-      // Serialize anonymous reads to reuse a snapshot, rather than create a row per GET.
+      // Reuse identical snapshots within their validity window.
       await m.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         set.id + fingerprint,
       ]);
@@ -339,7 +375,7 @@ export class DocumentSetsService {
           set.revision,
           locale,
           fingerprint,
-          JSON.stringify(set.configuration),
+          JSON.stringify({ ...set.configuration, pendingReviewOwner }),
           JSON.stringify(documents),
         ],
       );
@@ -448,6 +484,16 @@ export class DocumentSetsService {
       snapshot.source_id,
       dto.organizationId,
     );
+    const owner = snapshot.configuration.pendingReviewOwner;
+    if (
+      owner &&
+      (owner.clientId !== source.client_record_id ||
+        owner.subjectId !== dto.subjectId ||
+        owner.organizationId !== (dto.organizationId ?? null) ||
+        owner.sessionId !== (dto.sessionId ?? null))
+    ) {
+      throw new ForbiddenException('Snapshot outside review context');
+    }
     // Canonical fields make a replay independent of JSON property order.
     const confirmations = dto.confirmations
       .map((c) => ({
@@ -567,6 +613,33 @@ export class DocumentSetsService {
   async pending(caller: Caller, dto: EvaluateSetDto, evidenceId?: string) {
     const set = await this.set(dto.applicationId, dto.documentSetKey);
     const source = await this.source(caller, set.source_id, dto.organizationId);
+    const { documents, acceptedDocumentIds } = await this.evaluatePending(
+      set,
+      source,
+      dto,
+      evidenceId,
+    );
+    return {
+      documentSetKey: set.key,
+      revision: set.revision,
+      pendingDocuments: documents.map((doc) => ({
+        ...doc,
+        reason: acceptedDocumentIds.has(doc.documentId)
+          ? 'new_version'
+          : 'new_document',
+      })),
+      allowed: !documents.some(
+        (d) =>
+          d.blocking && (!d.deadline || new Date(d.deadline) <= new Date()),
+      ),
+    };
+  }
+  private async evaluatePending(
+    set: SetRow,
+    source: Source,
+    dto: EvaluateSetDto,
+    evidenceId?: string,
+  ) {
     if (set.configuration.requiresOrganization && !dto.organizationId)
       throw new ForbiddenException('Organization required');
     const docs = await this.documents(set, dto.locale);
@@ -590,8 +663,9 @@ export class DocumentSetsService {
           (!set.configuration.requiresMfa || r.assurance.mfaVerified),
       )
       .flatMap((r) => r.documents);
-    const pendingDocuments = docs
-      .filter(
+    return {
+      acceptedDocumentIds: new Set(accepted.map((a) => a.documentId)),
+      documents: docs.filter(
         (d) =>
           !accepted.some(
             (a) =>
@@ -601,20 +675,6 @@ export class DocumentSetsService {
                 (a.documentVersionId === d.documentVersionId &&
                   a.contentHash === d.contentHash)),
           ),
-      )
-      .map((d) => ({
-        ...d,
-        reason: accepted.some((a) => a.documentId === d.documentId)
-          ? 'new_version'
-          : 'new_document',
-      }));
-    return {
-      documentSetKey: set.key,
-      revision: set.revision,
-      pendingDocuments,
-      allowed: !pendingDocuments.some(
-        (d) =>
-          d.blocking && (!d.deadline || new Date(d.deadline) <= new Date()),
       ),
     };
   }

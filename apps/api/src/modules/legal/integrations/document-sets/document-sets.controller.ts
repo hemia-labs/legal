@@ -90,6 +90,15 @@ export class EvidenceController {
   ) {
     return this.service.pending(req.integrationCaller, dto);
   }
+  @Post('pending/prepare')
+  @Permissions('legal.integration.acceptances.prepare')
+  @Header('Cache-Control', 'no-store')
+  preparePending(
+    @Body(validation) dto: EvaluateSetDto,
+    @Req() req: IntegrationRequest,
+  ) {
+    return this.service.preparePending(req.integrationCaller, dto);
+  }
   @Post('evidence/history')
   @Permissions('legal.integration.acceptances.prepare')
   @Header('Cache-Control', 'no-store')
