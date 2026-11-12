@@ -13,6 +13,7 @@ import {
   IsUUID,
   Length,
   Matches,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 export class SetDocumentDto {
@@ -29,6 +30,9 @@ export class SaveDocumentSetDto {
   @IsIn(['collector_attested', 'verified_session']) verification: string;
   @IsBoolean() requiresOrganization: boolean;
   @IsBoolean() requiresMfa: boolean;
+  @ValidateIf((_dto, value: unknown) => value !== undefined)
+  @IsIn(['individual', 'organization'])
+  evidenceScope?: 'individual' | 'organization';
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(100)
