@@ -399,6 +399,7 @@ export class DocumentSetsService {
         name: set.name,
         revision: set.revision,
         evidenceScope: set.configuration.evidenceScope ?? 'individual',
+        verification: set.configuration.verification,
         documents: await this.documents(set, dto.locale),
       });
     }
@@ -410,7 +411,11 @@ export class DocumentSetsService {
     const source = await this.source(caller, set.source_id, dto.organizationId);
     if (set.configuration.evidenceScope === 'organization' && !dto.sessionId)
       throw new ForbiddenException('Verified session required by document set');
-    const { documents } = await this.evaluatePending(set, source, dto);
+    const pending = await this.evaluatePending(set, source, dto);
+    const documents =
+      set.configuration.usage === 'account'
+        ? pending.documents.slice(0, 10)
+        : pending.documents;
     if (!documents.length) {
       return { documentSetKey: set.key, revision: set.revision, documents: [] };
     }
