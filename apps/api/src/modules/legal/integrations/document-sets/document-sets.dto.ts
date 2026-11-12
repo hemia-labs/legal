@@ -13,11 +13,13 @@ import {
   IsUUID,
   Length,
   Matches,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 export class SetDocumentDto {
   @IsUUID() documentId: string;
-  @IsIn(['accept', 'acknowledge', 'consent']) requiredAction: string;
+  @IsIn(['accept', 'acknowledge', 'consent', 'informational'])
+  requiredAction: string;
   @IsBoolean() blocking: boolean;
   @IsBoolean() requireReacceptance: boolean;
   @IsOptional() @IsISO8601() deadline?: string;
@@ -29,6 +31,12 @@ export class SaveDocumentSetDto {
   @IsIn(['collector_attested', 'verified_session']) verification: string;
   @IsBoolean() requiresOrganization: boolean;
   @IsBoolean() requiresMfa: boolean;
+  @ValidateIf((_dto, value: unknown) => value !== undefined)
+  @IsIn(['individual', 'organization'])
+  evidenceScope?: 'individual' | 'organization';
+  @ValidateIf((_dto, value: unknown) => value !== undefined)
+  @IsIn(['account'])
+  usage?: 'account';
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(100)
@@ -60,13 +68,15 @@ export class RecordEvidenceDto {
   @Type(() => EvidenceConfirmationDto)
   confirmations: EvidenceConfirmationDto[];
 }
-export class EvaluateSetDto {
+export class AccountCatalogDto {
   @IsUUID() applicationId: string;
-  @Matches(/^[a-z][a-z0-9_-]{1,79}$/) documentSetKey: string;
   @IsString() @Length(1, 160) subjectId: string;
   @IsOptional() @IsString() @Length(1, 120) organizationId?: string;
   @IsOptional() @IsString() @Length(1, 160) sessionId?: string;
   @Matches(/^[a-z]{2}-[A-Z]{2}$/) locale: string;
+}
+export class EvaluateSetDto extends AccountCatalogDto {
+  @Matches(/^[a-z][a-z0-9_-]{1,79}$/) documentSetKey: string;
 }
 export class ValidateSetEvidenceDto extends EvaluateSetDto {
   @IsUUID() evidenceId: string;

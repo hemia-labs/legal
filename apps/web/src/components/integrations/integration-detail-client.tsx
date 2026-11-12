@@ -8,6 +8,7 @@ import { PageHeading } from "@/components/page-heading";
 import { Button } from "@/components/zuno/button";
 import { StatusBadge } from "@/components/zuno/status-badge";
 import { IntegrationForm } from "@/components/integrations/integration-form";
+import { DocumentSetsPanel } from "@/components/integrations/document-sets-panel";
 import { LegalApiError } from "@/lib/legal-api";
 import { listApplications, type Application } from "@/services/application.service";
 import { listDocuments, type LegalDocument } from "@/services/document.service";
@@ -38,6 +39,7 @@ export function IntegrationDetailClient({ id, mode = "detail" }: { id: string; m
   const canReadIssuers = session.permissions.includes("legal.issuers.view");
   const canReadApplications = session.permissions.includes("legal.applications.view");
   const canReadDocuments = session.permissions.includes("legal.documents.view");
+  const canEditDocuments = session.permissions.includes("legal.documents.edit");
   const canReadClients = canEdit || session.permissions.includes("legal.integrations.create");
   return (
     <IntegrationDetailScreen
@@ -49,6 +51,7 @@ export function IntegrationDetailClient({ id, mode = "detail" }: { id: string; m
       canReadIssuers={canReadIssuers}
       canReadApplications={canReadApplications}
       canReadDocuments={canReadDocuments}
+      canEditDocuments={canEditDocuments}
       canReadClients={canReadClients}
     />
   );
@@ -62,6 +65,7 @@ function IntegrationDetailScreen({
   canReadIssuers,
   canReadApplications,
   canReadDocuments,
+  canEditDocuments,
   canReadClients,
 }: {
   id: string;
@@ -71,6 +75,7 @@ function IntegrationDetailScreen({
   canReadIssuers: boolean;
   canReadApplications: boolean;
   canReadDocuments: boolean;
+  canEditDocuments: boolean;
   canReadClients: boolean;
 }) {
   const router = useRouter();
@@ -223,6 +228,8 @@ function IntegrationDetailScreen({
         />
         <Summary label="Estado" value={integration.enabled ? "Habilitada" : "Deshabilitada"} detail="de la integración" />
       </section>
+
+      {canReadDocuments && <DocumentSetsPanel integration={integration} documents={documents} canEdit={canEditDocuments} />}
 
       <section aria-label="Configuración de integración" className="grid gap-4 xl:grid-cols-2">
         <Panel title="Aplicación y contexto" description="Entidades de Legal y datos del producto consumidor asociados a esta integración.">

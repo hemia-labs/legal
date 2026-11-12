@@ -557,6 +557,7 @@ let app;
       ],
     };
     let mfa = false;
+    let representativeAllowed = true;
     verification.postVerificationContext = async (
       _url,
       _prod,
@@ -564,12 +565,12 @@ let app;
       body,
     ) => {
       const input = JSON.parse(body);
-      assert.equal(input.documentSetKey, 'registration');
       return {
         subjectId: input.subjectId,
         organizationId: input.organizationId,
         sessionId: input.sessionId,
-        canAcceptDocuments: true,
+        canAcceptDocuments:
+          input.documentSetKey !== 'account_contracts' || representativeAllowed,
         authenticationMethod: 'passkey',
         mfaVerified: mfa,
       };
@@ -692,6 +693,154 @@ let app;
     assert.deepEqual(
       updatedHistory[1].documents.map((d) => d.documentVersionId),
       [newVersion],
+    );
+    const organizationId = randomUUID();
+    const organizationSetPath = setPath.replace(
+      /registration$/,
+      'account_contracts',
+    );
+    const organizationSet = {
+      ...config,
+      evidenceScope: 'organization',
+      verification: 'verified_session',
+      requiresOrganization: true,
+    };
+    assert.equal(
+      (
+        await http('PUT', organizationSetPath, {
+          ...organizationSet,
+          verification: 'collector_attested',
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (await http('PUT', organizationSetPath, organizationSet)).status,
+      200,
+    );
+    assert.equal(
+      (
+        await http(
+          'GET',
+          publicPath.replace('/registration?', '/account_contracts?'),
+        )
+      ).status,
+      404,
+    );
+    const organizationReview = {
+      ...reviewQuery,
+      documentSetKey: 'account_contracts',
+      organizationId,
+    };
+    const sharedReview = await http('POST', reviewPath, organizationReview);
+    assert.equal(sharedReview.status, 201, JSON.stringify(sharedReview));
+    const signature = {
+      ...secureEvidence,
+      snapshotToken: sharedReview.body.snapshotToken,
+      idempotencyKey: randomUUID(),
+      organizationId,
+      occurredAt: new Date().toISOString(),
+    };
+    representativeAllowed = false;
+    assert.equal((await http('POST', recordPath, signature)).status, 403);
+    representativeAllowed = true;
+    const signed = await http('POST', recordPath, signature);
+    assert.equal(signed.status, 201, JSON.stringify(signed));
+    const peer = { ...organizationReview, subjectId: randomUUID() };
+    const elsewhere = { ...peer, organizationId: randomUUID() };
+    const pendingPath = '/v1/legal/integrations/pending/evaluate';
+    const historyPath = '/v1/legal/integrations/evidence/history';
+    assert.deepEqual(
+      (await http('POST', pendingPath, peer)).body.pendingDocuments,
+      [],
+    );
+    assert.equal(
+      (await http('POST', pendingPath, elsewhere)).body.pendingDocuments.length,
+      1,
+    );
+    assert.deepEqual(
+      (await http('POST', historyPath, elsewhere)).body.items,
+      [],
+    );
+    assert.equal(
+      (
+        await http('POST', historyPath, {
+          ...elsewhere,
+          cursor: signed.body.evidenceId,
+        })
+      ).status,
+      400,
+    );
+    assert.deepEqual(
+      (await http('POST', historyPath, peer)).body.items.map((r) => [
+        r.evidenceId,
+        r.signerSubjectId,
+      ]),
+      [[signed.body.evidenceId, subject]],
+    );
+    const catalogPath = '/v1/legal/integrations/account-catalog';
+    const catalogQuery = {
+      applicationId: application,
+      subjectId: subject,
+      organizationId,
+      locale: 'es-MX',
+    };
+    const catalogSetPath = setPath.replace(/registration$/, 'account_policies');
+    const policy = {
+      ...config,
+      usage: 'account',
+      documents: [
+        {
+          documentId: privacyDocument,
+          requiredAction: 'informational',
+          blocking: false,
+          requireReacceptance: false,
+        },
+      ],
+    };
+    assert.equal(
+      (
+        await http('PUT', catalogSetPath, {
+          ...policy,
+          documents: [{ ...policy.documents[0], blocking: true }],
+        })
+      ).status,
+      400,
+    );
+    assert.equal((await http('PUT', catalogSetPath, policy)).status, 200);
+    const catalog = await http('POST', catalogPath, catalogQuery);
+    assert.deepEqual(
+      catalog.body.sets.map((set) => [
+        set.documentSetKey,
+        set.documents[0].requiredAction,
+      ]),
+      [['account_policies', 'informational']],
+    );
+    const policyQuery = { ...catalogQuery, documentSetKey: 'account_policies' };
+    assert.deepEqual(
+      (await http('POST', pendingPath, policyQuery)).body.pendingDocuments,
+      [],
+    );
+    assert.deepEqual(
+      (await http('POST', reviewPath, policyQuery)).body.documents,
+      [],
+    );
+    assert.equal(
+      (
+        await http(
+          'GET',
+          publicPath.replace('/registration?', '/account_policies?'),
+        )
+      ).status,
+      404,
+    );
+    await db.query(
+      "UPDATE document_versions SET effective_from='2099-01-01' WHERE id=$1",
+      [privacyVersion],
+    );
+    assert.deepEqual(
+      (await http('POST', catalogPath, catalogQuery)).body.sets[0].documents,
+      [],
     );
     liveActor = {
       ...actor,
