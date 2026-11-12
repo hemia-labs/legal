@@ -1,5 +1,11 @@
 # api
 
+## 0.5.0
+
+### Minor Changes
+
+- 8315302: Prepare subject-bound review snapshots containing only pending documents. Preserve earlier evidence and keep public registration snapshots complete.
+
 ## 0.4.0
 
 ### Minor Changes
