@@ -20,6 +20,7 @@ import type { IntegrationRequest } from '../acceptance/integration-auth.guard';
 import type { LegalActor } from '../../../../common/types/legal-request';
 import { scopePredicate } from '../../authorization/legal-scope';
 import {
+  AccountCatalogDto,
   RecordEvidenceDto,
   SaveDocumentSetDto,
   EvaluateSetDto,
@@ -159,6 +160,27 @@ export class DocumentSetsService {
     if (!/^[a-z][a-z0-9_-]{1,79}$/.test(key))
       throw new BadRequestException('Invalid document set key');
     await this.admin(applicationId, actor, 'legal.documents.edit');
+    if (
+      key === 'registration' &&
+      (dto.usage || dto.evidenceScope === 'organization')
+    )
+      throw new BadRequestException(
+        'Registration requires an individual public set',
+      );
+    if (
+      dto.documents.some(
+        (doc) =>
+          doc.requiredAction === 'informational' &&
+          (dto.usage !== 'account' ||
+            doc.blocking ||
+            doc.requireReacceptance ||
+            doc.deadline),
+      )
+    ) {
+      throw new BadRequestException(
+        'Informational documents require an account set without acceptance rules',
+      );
+    }
     if (dto.requiresMfa && dto.verification !== 'verified_session')
       throw new BadRequestException('MFA requires a verified session policy');
     if (
@@ -306,6 +328,7 @@ export class DocumentSetsService {
         ORDER BY v.effective_from DESC NULLS LAST,v.created_at DESC LIMIT 1`,
         [item.documentId, set.application_id, set.source_id, locale],
       );
+      if (!v && set.configuration.usage === 'account') continue;
       if (!v)
         throw new NotFoundException(
           'Document set has no current publication for this locale',
@@ -339,9 +362,47 @@ export class DocumentSetsService {
   }
   async published(applicationId: string, key: string, locale: string) {
     const set = await this.set(applicationId, key);
-    if (set.configuration.evidenceScope === 'organization')
+    if (
+      set.configuration.evidenceScope === 'organization' ||
+      set.configuration.usage === 'account'
+    )
       throw new NotFoundException('Public document set not found');
     return this.prepareSnapshot(set, locale, await this.documents(set, locale));
+  }
+  async accountCatalog(caller: Caller, dto: AccountCatalogDto) {
+    if (caller.role !== 'collector') throw new ForbiddenException();
+    const rows: Array<{ key: string }> = await this.db.query(
+      `SELECT key FROM legal_document_sets WHERE application_id=$1 AND enabled AND effective_from<=now() AND configuration->>'usage'='account' ORDER BY key`,
+      [dto.applicationId],
+    );
+    const sets = [];
+    for (const { key } of rows) {
+      let set: SetRow;
+      try {
+        set = await this.set(dto.applicationId, key);
+        await this.source(caller, set.source_id, dto.organizationId);
+      } catch (error) {
+        if (
+          error instanceof ForbiddenException ||
+          error instanceof NotFoundException
+        )
+          continue;
+        throw error;
+      }
+      if (
+        set.configuration.usage !== 'account' ||
+        (set.configuration.requiresOrganization && !dto.organizationId)
+      )
+        continue;
+      sets.push({
+        documentSetKey: key,
+        name: set.name,
+        revision: set.revision,
+        evidenceScope: set.configuration.evidenceScope ?? 'individual',
+        documents: await this.documents(set, dto.locale),
+      });
+    }
+    return { sets };
   }
   async preparePending(caller: Caller, dto: EvaluateSetDto) {
     if (caller.role !== 'collector') throw new ForbiddenException();
@@ -665,7 +726,9 @@ export class DocumentSetsService {
   ) {
     if (set.configuration.requiresOrganization && !dto.organizationId)
       throw new ForbiddenException('Organization required');
-    const docs = await this.documents(set, dto.locale);
+    const docs = (await this.documents(set, dto.locale)).filter(
+      (doc) => doc.requiredAction !== 'informational',
+    );
     const rows: Array<{ documents: Doc[]; assurance: Receipt['assurance'] }> =
       await this.db.query(
         `SELECT s.documents,r.assurance FROM legal_evidence_receipts r JOIN legal_document_set_snapshots s ON s.id=r.snapshot_id WHERE r.source_id=$1 AND (r.subject_id=$2 OR $7::boolean) AND r.organization_id IS NOT DISTINCT FROM $3 AND s.set_id=$4 AND s.locale=$5 AND ($6::uuid IS NULL OR r.id=$6)`,

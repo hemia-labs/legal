@@ -778,6 +778,70 @@ let app;
       ]),
       [[signed.body.evidenceId, subject]],
     );
+    const catalogPath = '/v1/legal/integrations/account-catalog';
+    const catalogQuery = {
+      applicationId: application,
+      subjectId: subject,
+      organizationId,
+      locale: 'es-MX',
+    };
+    const catalogSetPath = setPath.replace(/registration$/, 'account_policies');
+    const policy = {
+      ...config,
+      usage: 'account',
+      documents: [
+        {
+          documentId: privacyDocument,
+          requiredAction: 'informational',
+          blocking: false,
+          requireReacceptance: false,
+        },
+      ],
+    };
+    assert.equal(
+      (
+        await http('PUT', catalogSetPath, {
+          ...policy,
+          documents: [{ ...policy.documents[0], blocking: true }],
+        })
+      ).status,
+      400,
+    );
+    assert.equal((await http('PUT', catalogSetPath, policy)).status, 200);
+    const catalog = await http('POST', catalogPath, catalogQuery);
+    assert.deepEqual(
+      catalog.body.sets.map((set) => [
+        set.documentSetKey,
+        set.documents[0].requiredAction,
+      ]),
+      [['account_policies', 'informational']],
+    );
+    const policyQuery = { ...catalogQuery, documentSetKey: 'account_policies' };
+    assert.deepEqual(
+      (await http('POST', pendingPath, policyQuery)).body.pendingDocuments,
+      [],
+    );
+    assert.deepEqual(
+      (await http('POST', reviewPath, policyQuery)).body.documents,
+      [],
+    );
+    assert.equal(
+      (
+        await http(
+          'GET',
+          publicPath.replace('/registration?', '/account_policies?'),
+        )
+      ).status,
+      404,
+    );
+    await db.query(
+      "UPDATE document_versions SET effective_from='2099-01-01' WHERE id=$1",
+      [privacyVersion],
+    );
+    assert.deepEqual(
+      (await http('POST', catalogPath, catalogQuery)).body.sets[0].documents,
+      [],
+    );
     liveActor = {
       ...actor,
       authorization: {

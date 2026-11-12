@@ -8,7 +8,7 @@ La creación de documentos no cambia: crear, cargar fuente, revisar y publicar. 
 
 1. Registrar en el catálogo de Sistemas `configuration.legalAcceptances.identityIssuer` (estable, por ejemplo `urn:hemia:producto`) y `productCode`, y clientes OAuth con funciones `collector` y/o `validator`.
 2. Vincular el sistema con la aplicación legal y la lista de documentos permitidos mediante la API existente de integraciones. Ya no se exige una regla de aceptación del motor anterior para habilitar esa vinculación: sí se exige publicación pública vigente con HTML desde el catálogo.
-3. Configurar los conjuntos por la API siguiente. No hay pantalla nueva de administración en esta entrega.
+3. Configurar los conjuntos en el detalle de la integración o mediante la API siguiente.
 
 ```http
 GET /v1/legal/applications/{applicationId}/document-sets
@@ -48,6 +48,8 @@ Ejemplo de creación (sustituir identificadores):
 La respuesta contiene `key`, `applicationId` y `revision` (UUID). Una edición debe enviar `expectedRevision` igual a la revisión leída; un conflicto devuelve 409 `DOCUMENT_SET_CHANGED`. Cada actualización genera otra revisión. `effectiveFrom` determina desde cuándo puede consultarse la configuración guardada; no hay una cola de revisiones programadas: reemplazar una configuración con otra futura deja el conjunto sin consulta pública hasta esa fecha.
 
 Cada documento debe pertenecer a esa aplicación y estar permitido en la integración. Los documentos del conjunto deben estar publicados en el `locale` solicitado (sin sustitución silenciosa de idioma). La clave es arbitraria y no activa comportamiento específico de producto.
+
+En el detalle de la integración, **Conjuntos de documentos** permite administrar la selección desde el catálogo de documentos vinculados. El conjunto público `registration` sigue reservado al alta. Los conjuntos con `usage: "account"` se descubren mediante `POST /v1/legal/integrations/account-catalog` con `applicationId`, `subjectId`, `organizationId` cuando corresponde y `locale`. La respuesta incluye la clave, el alcance de evidencia y los documentos vigentes de cada conjunto autorizado. Una publicación sin vigencia actual se omite en los conjuntos de cuenta. En esos conjuntos `informational` muestra el documento para lectura y queda excluido de pendientes y de la preparación de evidencia. Los conjuntos de cuenta requieren acceso técnico autenticado y se consultan fuera del registro público.
 
 `evidenceScope` admite `individual` (predeterminado) u `organization`. El alcance se fija al crear el conjunto. Un conjunto de organización exige `requiresOrganization: true` y `verification: verified_session`. Su revisión se prepara mediante `pending/prepare` con `sessionId` y el producto debe verificar en su callback que la persona puede firmar por esa organización. El snapshot del conjunto para registro público queda reservado al alcance individual. En pendientes e historial, la evidencia de organización cubre a los miembros del mismo consultorio y el historial devuelve `signerSubjectId`. El consumidor debe autenticar al miembro y derivar su organización de su contexto confiable antes de consultar. La validación de un comprobante por firmante en `evidence/validate` conserva su contrato actual.
 
