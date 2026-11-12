@@ -1,5 +1,11 @@
 # web
 
+## 0.6.0
+
+### Minor Changes
+
+- 2457e39: Manage document sets from the integration detail and discover account document sets with their effective publications and acceptance rules.
+
 ## 0.5.0
 
 ## 0.4.0
