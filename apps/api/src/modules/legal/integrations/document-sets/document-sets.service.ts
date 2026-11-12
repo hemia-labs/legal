@@ -375,7 +375,14 @@ export class DocumentSetsService {
       `SELECT key FROM legal_document_sets WHERE application_id=$1 AND enabled AND effective_from<=now() AND configuration->>'usage'='account' ORDER BY key`,
       [dto.applicationId],
     );
-    const sets = [];
+    const sets: Array<{
+      documentSetKey: string;
+      name: string;
+      revision: string;
+      evidenceScope: NonNullable<SaveDocumentSetDto['evidenceScope']>;
+      verification: SaveDocumentSetDto['verification'];
+      documents: Doc[];
+    }> = [];
     for (const { key } of rows) {
       let set: SetRow;
       try {
