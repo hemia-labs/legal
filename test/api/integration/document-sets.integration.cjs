@@ -30,6 +30,9 @@ const { PermissionsGuard } = require(
 const verification = require(
   base + '/integrations/acceptance/verification-http',
 );
+const { isPlatformOperator } = require(
+  base + '/authorization/legal-authorization',
+);
 const { DocumentSets1793318400000 } = require(
   path.resolve(base, '../../database/migrations/1793318400000-DocumentSets'),
 );
@@ -159,10 +162,16 @@ let app;
       "UPDATE systems SET configuration=configuration #- '{legalAcceptances,contextService}',services='[]'::jsonb WHERE id=$1",
       [system],
     );
+    const platformOrganization = randomUUID();
     const service = new DocumentSetsService(
       db,
       legal,
-      { contextUrl: (value) => new URL(value), production: false },
+      {
+        contextUrl: (value) => new URL(value),
+        production: false,
+        platformOperatorFor: (authorization) =>
+          isPlatformOperator(authorization, [platformOrganization]),
+      },
       { get: async () => 'synthetic-token' },
     );
     const actor = {
@@ -887,6 +896,78 @@ let app;
       },
     };
     assert.equal((await http('PUT', setPath, strong)).status, 403);
+    const contractSetPath = setPath.replace(/registration$/, 'saas_contract');
+    const listPath = setPath.replace(/\/registration$/, '');
+    await db.query(
+      'UPDATE document_versions SET effective_from=NULL WHERE id=$1',
+      [privacyVersion],
+    );
+    // Representante del consultorio: an internal SaaS contract signed per organization.
+    const representativeContract = {
+      ...config,
+      name: 'Contrato de servicios SaaS',
+      usage: 'account',
+      evidenceScope: 'organization',
+      verification: 'verified_session',
+      requiresOrganization: true,
+      documents: [
+        {
+          documentId: privacyDocument,
+          requiredAction: 'accept',
+          blocking: false,
+          requireReacceptance: true,
+        },
+      ],
+    };
+    assert.equal(
+      (await http('PUT', contractSetPath, representativeContract)).status,
+      403,
+    );
+    assert.equal((await http('GET', listPath)).status, 403);
+    liveActor = {
+      ...actor,
+      authorization: {
+        assignments: [],
+        expiresAt: Math.floor(Date.now() / 1000) + 300,
+        authenticatedOrganizationId: platformOrganization.toUpperCase(),
+      },
+    };
+    const linked = await http('PUT', contractSetPath, representativeContract);
+    assert.equal(linked.status, 200, JSON.stringify(linked));
+    const listed = await http('GET', listPath);
+    assert.equal(listed.status, 200, JSON.stringify(listed));
+    const contractSet = listed.body.find((set) => set.key === 'saas_contract');
+    assert.equal(contractSet.configuration.usage, 'account');
+    assert.equal(contractSet.configuration.evidenceScope, 'organization');
+    assert.deepEqual(
+      contractSet.configuration.documents.map((doc) => doc.documentId),
+      [privacyDocument],
+    );
+    const contractCatalog = await http('POST', catalogPath, catalogQuery);
+    assert.ok(
+      contractCatalog.body.sets.some(
+        (set) => set.documentSetKey === 'saas_contract',
+      ),
+      JSON.stringify(contractCatalog.body),
+    );
+    liveActor = {
+      ...liveActor,
+      authorization: {
+        ...liveActor.authorization,
+        authenticatedOrganizationId: randomUUID(),
+      },
+    };
+    assert.equal((await http('GET', listPath)).status, 403);
+    assert.equal(
+      (
+        await http('PUT', contractSetPath, {
+          ...representativeContract,
+          expectedRevision: linked.body.revision,
+        })
+      ).status,
+      403,
+    );
+    liveActor = actor;
     const count = (
       await db.query('SELECT count(*)::int n FROM audit_events')
     )[0].n;

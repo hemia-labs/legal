@@ -118,8 +118,12 @@ export class DocumentSetsService {
     actor: LegalActor,
     permission: string,
   ) {
-    // A consumer-organization assignment cannot edit an application-wide policy.
-    if (actor.authorization?.authenticatedOrganizationId)
+    // A consumer-organization assignment cannot edit an application-wide policy,
+    // unless the selected organization is a configured platform operator.
+    if (
+      actor.authorization?.authenticatedOrganizationId &&
+      !this.registry.platformOperatorFor(actor.authorization)
+    )
       throw new ForbiddenException(
         'Application-wide policy management required',
       );

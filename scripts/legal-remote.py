@@ -35,22 +35,34 @@ try:
         args.append('--acknowledge-schema')
     if os.environ.get('BACKUP_CONFIRMATION') == 'I_HAVE_A_BACKUP':
         args.append('--backup-confirmed')
-    # Apply the non-secret authorization setting through the dedicated deploy user.
+    # Apply non-secret authorization settings through the dedicated deploy user.
     # An unset CI variable preserves the existing host configuration.
+    settings = []
     mode = os.environ.get('HEMIA_AUTHORIZATION_MODE', '')
     if mode:
         if mode not in ('roles', 'authenticated'):
             raise ValueError('Invalid HEMIA_AUTHORIZATION_MODE')
-        configure_mode = r"""import os,re,shutil,sys,tempfile
+        settings.append(('HEMIA_AUTHORIZATION_MODE', mode, 'authmode'))
+    platform = os.environ.get('LEGAL_PLATFORM_ORGANIZATION_IDS', '')
+    if platform:
+        ids = [value.strip().lower() for value in platform.split(',') if value.strip()]
+        if not ids or len(set(ids)) != len(ids) or not all(re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', value) for value in ids):
+            raise ValueError('Invalid LEGAL_PLATFORM_ORGANIZATION_IDS')
+        settings.append(('LEGAL_PLATFORM_ORGANIZATION_IDS', ','.join(ids), 'platform-orgs'))
+    configure_setting = r"""import os,re,shutil,sys,tempfile
 from pathlib import Path
 from datetime import datetime,timezone
 p=Path(sys.argv[1])/'shared/production.env'
+key,value,label=sys.argv[2:5]
+if not re.fullmatch(r'[A-Z][A-Z0-9_]*',key) or not re.fullmatch(r'[A-Za-z0-9,-]+',value):
+    raise ValueError('Invalid setting')
 if not p.is_file() or p.stat().st_mode & 0o077:
     raise ValueError('Expected private production.env')
 old=p.read_text()
-new=re.sub(r'^HEMIA_AUTHORIZATION_MODE=.*\n?', '', old, flags=re.M).rstrip()+'\nHEMIA_AUTHORIZATION_MODE='+sys.argv[2]+'\n'
+kept=re.sub(r'^'+key+r'=.*\n?', '', old, flags=re.M).rstrip()
+new=(kept+'\n' if kept else '')+key+'='+value+'\n'
 if old != new:
-    backup=p.with_name('production.env.before-authmode-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
+    backup=p.with_name('production.env.before-'+label+'-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
     shutil.copy2(p,backup)
     fd,tmp=tempfile.mkstemp(prefix='.production.env.',dir=p.parent)
     try:
@@ -59,9 +71,10 @@ if old != new:
         os.replace(tmp,p)
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
-print('HEMIA_AUTHORIZATION_MODE='+sys.argv[2])
+print(key+'='+value)
 """
-        subprocess.run(ssh + [shlex.join(['python3', '-c', configure_mode, root, mode])], check=True)
+    for key, value, label in settings:
+        subprocess.run(ssh + [shlex.join(['python3', '-c', configure_setting, root, key, value, label])], check=True)
     # The broker moves independently of the application and its credentials.
     amqp_host = os.environ.get('AMQP_HOST', '')
     if amqp_host:
