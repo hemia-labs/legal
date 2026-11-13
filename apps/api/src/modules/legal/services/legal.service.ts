@@ -16,7 +16,10 @@ import {
   FindOptionsWhere,
   ILike,
   IsNull,
+  LessThanOrEqual,
+  MoreThan,
   Not,
+  Or,
   Repository,
 } from 'typeorm';
 import type {
@@ -1704,11 +1707,14 @@ export class LegalService {
     documentKey: string,
     locale: string,
     version?: string,
+    { includeAllArtifacts = false } = {},
   ) {
     return this.publishedDocument(
       applicationId,
       { key: documentKey, locale },
       version,
+      undefined,
+      { includeAllArtifacts },
     );
   }
 
@@ -1731,6 +1737,7 @@ export class LegalService {
     documentLookup: { key?: string; id?: string; locale: string },
     version?: string,
     accountVersionId?: string,
+    { includeAllArtifacts = false } = {},
   ) {
     const document = await this.documents.findOne({
       where: {
@@ -1746,16 +1753,25 @@ export class LegalService {
       throw new NotFoundException('Document not found');
     }
 
+    const now = new Date();
     const published = await this.versions.findOne({
       where: {
         documentId: document.id,
         status: accountVersionId
           ? In(['published', 'superseded'])
           : 'published',
-        ...(accountVersionId ? { id: accountVersionId } : {}),
+        ...(accountVersionId
+          ? { id: accountVersionId }
+          : {
+              effectiveFrom: Or(IsNull(), LessThanOrEqual(now)),
+              effectiveUntil: Or(IsNull(), MoreThan(now)),
+            }),
         ...(version ? { version } : {}),
       },
-      order: { effectiveFrom: 'DESC', createdAt: 'DESC' },
+      order: {
+        effectiveFrom: { direction: 'DESC', nulls: 'LAST' },
+        createdAt: 'DESC',
+      },
     });
     if (!published) throw new NotFoundException('Published version not found');
 
@@ -1772,7 +1788,10 @@ export class LegalService {
       throw new NotFoundException('Published storage not found');
 
     const assets = await this.publicationAssets.find({
-      where: { publicationId: publication.id },
+      where: {
+        publicationId: publication.id,
+        ...(includeAllArtifacts ? {} : { kind: 'html' }),
+      },
     });
     const downloadableAssets = accountVersionId
       ? assets.filter(

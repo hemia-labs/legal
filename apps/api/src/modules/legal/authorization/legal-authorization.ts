@@ -246,37 +246,16 @@ function allPermissions(): string[] {
   return [...new Set(LEGAL_ROLES.flatMap((role) => [...role.permissions]))];
 }
 
-/**
- * Authenticated-mode members of a configured platform organization operate
- * system-wide policies (integrations without organization restrictions and
- * application-wide document sets). Every other organization stays isolated.
- */
-export function isPlatformOperator(
-  auth: LegalAuthorization | undefined,
-  platformOrganizationIds: readonly string[],
-): boolean {
-  const selected = auth?.authenticatedOrganizationId;
-  return (
-    !!selected &&
-    uuid(selected) &&
-    (auth?.expiresAt ?? 0) > Date.now() / 1000 &&
-    platformOrganizationIds.some(
-      (id) => id.toLowerCase() === selected.toLowerCase(),
-    )
-  );
-}
-
-// Authenticated-mode humans may not delegate broader consumer access to a machine.
-// Platform operators may additionally manage unrestricted (all-organization) policies,
-// never policies restricted to another organization.
+// Machine grants stay organization-bound. Integration catalog callers can allow
+// shared configuration, never a policy restricted to another organization.
 export function consumerOrganizationsAllowed(
   auth: LegalAuthorization | undefined,
   organizationIds: string[],
-  platformOperator = false,
+  allowUnrestricted = false,
 ): boolean {
   const selected = auth?.authenticatedOrganizationId;
   if (!selected) return true;
-  if (!organizationIds.length) return platformOperator;
+  if (!organizationIds.length) return allowUnrestricted;
   return organizationIds.every(
     (id) => id.toLowerCase() === selected.toLowerCase(),
   );

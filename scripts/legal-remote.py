@@ -43,12 +43,6 @@ try:
         if mode not in ('roles', 'authenticated'):
             raise ValueError('Invalid HEMIA_AUTHORIZATION_MODE')
         settings.append(('HEMIA_AUTHORIZATION_MODE', mode, 'authmode'))
-    platform = os.environ.get('LEGAL_PLATFORM_ORGANIZATION_IDS', '')
-    if platform:
-        ids = [value.strip().lower() for value in platform.split(',') if value.strip()]
-        if not ids or len(set(ids)) != len(ids) or not all(re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', value) for value in ids):
-            raise ValueError('Invalid LEGAL_PLATFORM_ORGANIZATION_IDS')
-        settings.append(('LEGAL_PLATFORM_ORGANIZATION_IDS', ','.join(ids), 'platform-orgs'))
     configure_setting = r"""import os,re,shutil,sys,tempfile
 from pathlib import Path
 from datetime import datetime,timezone

@@ -1,11 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import authorizationConfig, {
-  platformOrganizationIds,
-} from '../../../../apps/api/src/config/authorization.config';
+import authorizationConfig from '../../../../apps/api/src/config/authorization.config';
 import {
   consumerOrganizationsAllowed,
   grantsFor,
-  isPlatformOperator,
   permissionsForAuthorization,
   validateLegalContext,
 } from '../../../../apps/api/src/modules/legal/authorization/legal-authorization';
@@ -131,40 +128,21 @@ describe('Authenticated Legal action policy', () => {
       else process.env.HEMIA_AUTHORIZATION_MODE = old;
     }
   });
-  it('parses platform organizations and limits them to unrestricted policies', () => {
-    const platform = randomUUID();
-    expect(platformOrganizationIds(undefined)).toEqual([]);
-    expect(
-      platformOrganizationIds(' ' + platform.toUpperCase() + ' , '),
-    ).toEqual([platform]);
-    expect(() => platformOrganizationIds('not-a-uuid')).toThrow(
-      'LEGAL_PLATFORM_ORGANIZATION_IDS',
-    );
-    expect(() => platformOrganizationIds(platform + ',' + platform)).toThrow(
-      'LEGAL_PLATFORM_ORGANIZATION_IDS',
-    );
-    const expiresAt = Math.floor(Date.now() / 1000) + 60;
-    const own = {
-      assignments: [],
-      expiresAt,
-      authenticatedOrganizationId: platform,
-    };
-    const foreign = { ...own, authenticatedOrganizationId: randomUUID() };
-    expect(isPlatformOperator(own, [platform])).toBe(true);
-    expect(isPlatformOperator(foreign, [platform])).toBe(false);
-    expect(isPlatformOperator({ ...own, expiresAt: 1 }, [platform])).toBe(
-      false,
-    );
-    expect(isPlatformOperator({ assignments: [], expiresAt }, [platform])).toBe(
-      false,
-    );
+  it('allows shared catalog configuration without broadening machine grants', () => {
+    const own = validateLegalContext(claims(), expected, 'authenticated');
+    const foreign = randomUUID();
     expect(consumerOrganizationsAllowed(own, [], true)).toBe(true);
-    expect(consumerOrganizationsAllowed(own, [], false)).toBe(false);
-    expect(consumerOrganizationsAllowed(foreign, [], false)).toBe(false);
-    expect(consumerOrganizationsAllowed(own, [randomUUID()], true)).toBe(false);
-    expect(consumerOrganizationsAllowed(own, [platform], true)).toBe(true);
+    expect(consumerOrganizationsAllowed(own, [])).toBe(false);
     expect(
-      consumerOrganizationsAllowed({ assignments: [], expiresAt }, [], false),
+      consumerOrganizationsAllowed(own, [expected.organizationId], true),
     ).toBe(true);
+    expect(consumerOrganizationsAllowed(own, [foreign], true)).toBe(false);
+    expect(
+      consumerOrganizationsAllowed(
+        own,
+        [expected.organizationId, foreign],
+        true,
+      ),
+    ).toBe(false);
   });
 });

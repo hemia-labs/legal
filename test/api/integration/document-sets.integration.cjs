@@ -8,6 +8,7 @@ const load = createRequire(
 );
 const { DataSource } = load('typeorm');
 const { Test } = load('@nestjs/testing');
+const { ConfigService } = load('@nestjs/config');
 const base = path.resolve(
   __dirname,
   '../../../apps/api/dist/src/modules/legal',
@@ -30,8 +31,8 @@ const { PermissionsGuard } = require(
 const verification = require(
   base + '/integrations/acceptance/verification-http',
 );
-const { isPlatformOperator } = require(
-  base + '/authorization/legal-authorization',
+const { IntegrationRegistryService } = require(
+  base + '/integrations/registry/integration-registry.service',
 );
 const { DocumentSets1793318400000 } = require(
   path.resolve(base, '../../database/migrations/1793318400000-DocumentSets'),
@@ -126,6 +127,7 @@ let app;
       "INSERT INTO document_versions(id,document_id,version,content_hash) VALUES($1,$2,'1.0.0',$3)",
       [version, document, 'a'.repeat(64)],
     );
+    let publicationLookups = 0;
     const legal = {
       getAccountDocument: async (appId, id, versionId, locale) => {
         const [r] = await db.query(
@@ -141,6 +143,7 @@ let app;
         };
       },
       getPublicDocument: async (appId, key, locale, v) => {
+        publicationLookups++;
         const [r] = await db.query(
           'SELECT v.*,d.title,d.id docid FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE d.application_id=$1 AND d.key=$2 AND d.locale=$3 AND v.version=$4',
           [appId, key, locale, v],
@@ -162,16 +165,16 @@ let app;
       "UPDATE systems SET configuration=configuration #- '{legalAcceptances,contextService}',services='[]'::jsonb WHERE id=$1",
       [system],
     );
-    const platformOrganization = randomUUID();
+    const registry = new IntegrationRegistryService(
+      db,
+      new ConfigService({ legalIntegrations: { production: false } }),
+      {},
+    );
+    registry.contextUrl = (value) => new URL(value);
     const service = new DocumentSetsService(
       db,
       legal,
-      {
-        contextUrl: (value) => new URL(value),
-        production: false,
-        platformOperatorFor: (authorization) =>
-          isPlatformOperator(authorization, [platformOrganization]),
-      },
+      registry,
       { get: async () => 'synthetic-token' },
     );
     const actor = {
@@ -261,6 +264,16 @@ let app;
     response = await http('GET', publicPath);
     assert.equal(response.status, 200, JSON.stringify(response));
     const snapshot = response.body;
+    assert.equal(
+      publicationLookups,
+      1,
+      'Resolve each publication once per manifest',
+    );
+    assert.equal(snapshot.documents[0].documentVersionId, version);
+    assert.equal(
+      snapshot.documents[0].artifacts.html.url,
+      'https://storage.example/document.html',
+    );
     const repeated = await Promise.all(
       Array.from({ length: 5 }, () => http('GET', publicPath)),
     );
@@ -888,21 +901,22 @@ let app;
       (await http('POST', catalogPath, catalogQuery)).body.sets[0].documents,
       [],
     );
-    liveActor = {
+    const ownOrganization = randomUUID(), otherOrganization = randomUUID();
+    const authenticatedActor = (selected) => ({
       ...actor,
       authorization: {
-        ...actor.authorization,
-        authenticatedOrganizationId: randomUUID(),
+        assignments: [],
+        expiresAt: Math.floor(Date.now() / 1000) + 300,
+        authenticatedOrganizationId: selected,
       },
-    };
-    assert.equal((await http('PUT', setPath, strong)).status, 403);
+    });
+    liveActor = authenticatedActor(ownOrganization.toUpperCase());
     const contractSetPath = setPath.replace(/registration$/, 'saas_contract');
     const listPath = setPath.replace(/\/registration$/, '');
     await db.query(
       'UPDATE document_versions SET effective_from=NULL WHERE id=$1',
       [privacyVersion],
     );
-    // Representante del consultorio: an internal SaaS contract signed per organization.
     const representativeContract = {
       ...config,
       name: 'Contrato de servicios SaaS',
@@ -910,28 +924,14 @@ let app;
       evidenceScope: 'organization',
       verification: 'verified_session',
       requiresOrganization: true,
-      documents: [
-        {
-          documentId: privacyDocument,
-          requiredAction: 'accept',
-          blocking: false,
-          requireReacceptance: true,
-        },
-      ],
+      documents: [{
+        documentId: privacyDocument,
+        requiredAction: 'accept',
+        blocking: false,
+        requireReacceptance: true,
+      }],
     };
-    assert.equal(
-      (await http('PUT', contractSetPath, representativeContract)).status,
-      403,
-    );
-    assert.equal((await http('GET', listPath)).status, 403);
-    liveActor = {
-      ...actor,
-      authorization: {
-        assignments: [],
-        expiresAt: Math.floor(Date.now() / 1000) + 300,
-        authenticatedOrganizationId: platformOrganization.toUpperCase(),
-      },
-    };
+    // Shared configuration is available to eligible authenticated sessions without a UUID list.
     const linked = await http('PUT', contractSetPath, representativeContract);
     assert.equal(linked.status, 200, JSON.stringify(linked));
     const listed = await http('GET', listPath);
@@ -939,34 +939,66 @@ let app;
     const contractSet = listed.body.find((set) => set.key === 'saas_contract');
     assert.equal(contractSet.configuration.usage, 'account');
     assert.equal(contractSet.configuration.evidenceScope, 'organization');
-    assert.deepEqual(
-      contractSet.configuration.documents.map((doc) => doc.documentId),
-      [privacyDocument],
-    );
+    assert.deepEqual(contractSet.configuration.documents.map((doc) => doc.documentId), [privacyDocument]);
     const contractCatalog = await http('POST', catalogPath, catalogQuery);
-    assert.ok(
-      contractCatalog.body.sets.some(
-        (set) => set.documentSetKey === 'saas_contract',
-      ),
-      JSON.stringify(contractCatalog.body),
+    assert.ok(contractCatalog.body.sets.some((set) => set.documentSetKey === 'saas_contract'), JSON.stringify(contractCatalog.body));
+    liveActor = authenticatedActor(otherOrganization);
+    assert.equal((await http('GET', listPath)).status, 200);
+    const sharedEdit = await http('PUT', contractSetPath, {
+      ...representativeContract,
+      expectedRevision: linked.body.revision,
+    });
+    assert.equal(sharedEdit.status, 200, JSON.stringify(sharedEdit));
+
+    // Organization-restricted sets use the exact same source scope as integrations.
+    const restrictedSource = randomUUID();
+    await db.query(
+      'INSERT INTO external_identity_sources(id,system_id,application_id,issuer_id,enabled) SELECT $1,system_id,application_id,issuer_id,enabled FROM external_identity_sources WHERE id=$2',
+      [restrictedSource, source],
     );
-    liveActor = {
-      ...liveActor,
-      authorization: {
-        ...liveActor.authorization,
-        authenticatedOrganizationId: randomUUID(),
-      },
-    };
+    await db.query(
+      'INSERT INTO external_identity_source_documents(source_id,document_id) SELECT $1,document_id FROM external_identity_source_documents WHERE source_id=$2',
+      [restrictedSource, source],
+    );
+    await db.query('INSERT INTO external_identity_source_organizations VALUES($1,$2,true)', [restrictedSource, otherOrganization]);
+    const restrictedPath = setPath.replace(/registration$/, 'private_policy');
+    const restrictedConfig = { ...representativeContract, sourceId: restrictedSource };
+    const privateSet = await http('PUT', restrictedPath, restrictedConfig);
+    assert.equal(privateSet.status, 200, JSON.stringify(privateSet));
+    const ownList = await http('GET', listPath);
+    assert.ok(ownList.body.some((set) => set.key === 'private_policy'));
+    const ownEdit = await http('PUT', restrictedPath, { ...restrictedConfig, expectedRevision: privateSet.body.revision });
+    assert.equal(ownEdit.status, 200, JSON.stringify(ownEdit));
+
+    liveActor = authenticatedActor(ownOrganization);
+    const foreignList = await http('GET', listPath);
+    assert.equal(foreignList.status, 200);
+    assert.ok(foreignList.body.some((set) => set.key === 'saas_contract'));
+    assert.equal(foreignList.body.some((set) => set.key === 'private_policy'), false);
+    assert.equal((await http('PUT', restrictedPath, { ...restrictedConfig, expectedRevision: ownEdit.body.revision })).status, 403);
+    // A shared destination cannot be used to steal an existing set from another organization.
+    assert.equal((await http('PUT', restrictedPath, { ...representativeContract, expectedRevision: ownEdit.body.revision })).status, 403);
+    assert.equal((await http('PUT', contractSetPath, { ...restrictedConfig, expectedRevision: sharedEdit.body.revision })).status, 403);
+    assert.equal((await http('PUT', setPath.replace(/registration$/, 'foreign_new'), restrictedConfig)).status, 403);
+    const [unchanged] = await db.query('SELECT source_id,revision FROM legal_document_sets WHERE application_id=$1 AND key=$2', [application, 'private_policy']);
+    assert.equal(unchanged.source_id, restrictedSource);
+    assert.equal(unchanged.revision, ownEdit.body.revision);
+
+    await db.query('INSERT INTO external_identity_source_organizations VALUES($1,$2,true)', [restrictedSource, ownOrganization]);
+    for (const selected of [ownOrganization, otherOrganization]) {
+      liveActor = authenticatedActor(selected);
+      const mixed = await http('GET', listPath);
+      assert.equal(mixed.status, 200);
+      assert.equal(mixed.body.some((set) => set.key === 'private_policy'), false);
+      assert.equal((await http('PUT', restrictedPath, { ...restrictedConfig, expectedRevision: ownEdit.body.revision })).status, 403);
+    }
+    // Removing the UUID gate does not remove role, application or session validation.
+    liveActor = { ...actor, authorization: { ...actor.authorization, assignments: actor.authorization.assignments.map((assignment) => ({ ...assignment, resource_scope: { type: 'applications', ids: [randomUUID()] } })) } };
     assert.equal((await http('GET', listPath)).status, 403);
-    assert.equal(
-      (
-        await http('PUT', contractSetPath, {
-          ...representativeContract,
-          expectedRevision: linked.body.revision,
-        })
-      ).status,
-      403,
-    );
+    liveActor = { ...authenticatedActor(ownOrganization), authorization: { ...authenticatedActor(ownOrganization).authorization, expiresAt: 1 } };
+    assert.equal((await http('GET', listPath)).status, 403);
+    liveActor = { ...actor, authorization: undefined };
+    assert.equal((await http('GET', listPath)).status, 403);
     liveActor = actor;
     const count = (
       await db.query('SELECT count(*)::int n FROM audit_events')
