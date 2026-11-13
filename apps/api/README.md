@@ -154,3 +154,26 @@ Para revertir, restaurar `HEMIA_AUTHORIZATION_MODE=roles` en Legal y Access y re
 En modo `authenticated`, la administración humana de clientes de servicio e integraciones conserva la organización seleccionada: las políticas globales o de otras organizaciones no se muestran ni se pueden modificar. Las integraciones nuevas guardan su restricción de organización en la misma transacción. La autorización de máquinas conserva sus políticas existentes.
 
 Las integraciones creadas desde Console no tienen restricción de organización (atienden a todas las organizaciones consumidoras). Para administrarlas desde Legal en modo `authenticated`, configurar `LEGAL_PLATFORM_ORGANIZATION_IDS` con los IDs de Access de las organizaciones operadoras de la plataforma (separados por comas; también como variable `LEGAL_PLATFORM_ORGANIZATION_IDS` del entorno `prod` en GitHub, que el despliegue copia a `production.env`). Los miembros con esa organización activa pueden listar, abrir, editar y deshabilitar integraciones sin restricción y administrar los conjuntos de documentos de la aplicación. Editar no agrega restricciones de organización. Las integraciones restringidas a otra organización y todas las sesiones de organizaciones no listadas siguen excluidas. Sin la variable, el comportamiento anterior no cambia.
+
+### Administradores específicos por aplicación
+
+Cuando solo ciertas personas deben administrar esas integraciones, usar `LEGAL_PLATFORM_OPERATOR_BINDINGS` en lugar de conceder acceso a toda su organización. Es un array JSON de bindings explícitos; no se deduce autorización del correo ni de ser administrador en Console.
+
+```json
+[
+  {
+    "identityIssuer": "https://identity.example.test",
+    "subjectId": "admin-example",
+    "organizationId": "3f1c2b9e-8d7a-4c6b-9a5e-1f2d3c4b5a69",
+    "applicationIds": ["53e97cb8-8f1a-4c1f-9d7d-7c22330ecc85"]
+  }
+]
+```
+
+Los valores anteriores son ficticios. Obtener emisor/sujeto y organización activa del contexto autenticado y el ID real de la aplicación en Legal. Cada entrada autoriza exclusivamente a esa identidad humana, con esa organización activa y contexto vigente, para administrar integraciones compartidas y conjuntos de las aplicaciones indicadas. No cambia organizaciones consumidoras, permisos de máquinas, evidencia ni las otras facultades de catálogo que ya ofrece el modo temporal `authenticated`. El modo `roles` conserva sus asignaciones de Access.
+
+El backend rechaza JSON inválido, entradas duplicadas y una organización presente a la vez en bindings selectivos y en `LEGAL_PLATFORM_ORGANIZATION_IDS`. Antes de activar un binding, retirar cualquier concesión amplia de esa organización. Mantener `LEGAL_PLATFORM_OPERATOR_BINDINGS=[]` desactiva los bindings; no elimina concesiones amplias independientes.
+
+El workflow admite la variable `prod` `LEGAL_PLATFORM_OPERATOR_BINDINGS` y conserva la configuración del host si la variable CI está vacía. Para revocar expresamente los bindings enviar `[]`. Para vaciar expresamente `LEGAL_PLATFORM_ORGANIZATION_IDS` desde CI también se admite `[]`; el archivo del servidor recibe un valor vacío. El escritor valida contra la otra política del host, conserva un respaldo privado de `production.env`, escribe JSON compacto de una línea y no imprime identidades. `production.env` se consume como `env_file` de formato `raw`.
+
+Activar operadores es una concesión de acceso: revisar identidad y aplicaciones antes del despliegue. Para revertir el acceso, restaurar el valor anterior (o `[]`) y recrear la API; conservar integraciones, documentos y evidencias. Este mecanismo evita una migración global de modos para resolver una integración puntual; no sustituye la adopción de roles de Access cuando se retire el modo temporal.

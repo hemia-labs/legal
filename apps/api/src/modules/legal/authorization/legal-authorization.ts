@@ -1,5 +1,9 @@
-import type { AuthorizationMode } from '../../../config/authorization.config';
+import type {
+  AuthorizationMode,
+  PlatformOperatorBinding,
+} from '../../../config/authorization.config';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
+import type { LegalActor } from '../../../common/types/legal-request';
 import { LEGAL_ROLES } from './legal-role-catalog';
 
 export type LegalAssignment = {
@@ -263,6 +267,38 @@ export function isPlatformOperator(
     platformOrganizationIds.some(
       (id) => id.toLowerCase() === selected.toLowerCase(),
     )
+  );
+}
+
+/** Bind a verified human identity, active organization and application together. */
+export function isScopedPlatformOperator(
+  actor:
+    | Pick<
+        LegalActor,
+        'actorType' | 'identityIssuer' | 'subjectId' | 'authorization'
+      >
+    | undefined,
+  applicationId: string,
+  bindings: readonly PlatformOperatorBinding[],
+): boolean {
+  const selected = actor?.authorization?.authenticatedOrganizationId;
+  if (
+    actor?.actorType !== 'user' ||
+    !selected ||
+    !uuid(selected) ||
+    !uuid(applicationId) ||
+    !Number.isFinite(actor.authorization?.expiresAt) ||
+    !((actor.authorization?.expiresAt ?? 0) > Date.now() / 1000)
+  )
+    return false;
+  return bindings.some(
+    (binding) =>
+      binding.identityIssuer === actor.identityIssuer &&
+      binding.subjectId === actor.subjectId &&
+      binding.organizationId.toLowerCase() === selected.toLowerCase() &&
+      binding.applicationIds.some(
+        (id) => id.toLowerCase() === applicationId.toLowerCase(),
+      ),
   );
 }
 

@@ -1,5 +1,6 @@
 """Transfer a verified release and invoke its controller over pinned-host SSH."""
 import os
+import json
 from pathlib import Path
 import re
 import shlex
@@ -45,20 +46,73 @@ try:
         settings.append(('HEMIA_AUTHORIZATION_MODE', mode, 'authmode'))
     platform = os.environ.get('LEGAL_PLATFORM_ORGANIZATION_IDS', '')
     if platform:
-        ids = [value.strip().lower() for value in platform.split(',') if value.strip()]
-        if not ids or len(set(ids)) != len(ids) or not all(re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', value) for value in ids):
+        ids = [] if platform.strip() == '[]' else [value.strip().lower() for value in platform.split(',') if value.strip()]
+        if (not ids and platform.strip() != '[]') or len(set(ids)) != len(ids) or not all(re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', value) for value in ids):
             raise ValueError('Invalid LEGAL_PLATFORM_ORGANIZATION_IDS')
         settings.append(('LEGAL_PLATFORM_ORGANIZATION_IDS', ','.join(ids), 'platform-orgs'))
-    configure_setting = r"""import os,re,shutil,sys,tempfile
+    bindings = os.environ.get('LEGAL_PLATFORM_OPERATOR_BINDINGS', '')
+    if bindings:
+        # production.env is consumed by Compose with format: raw. Compact JSON
+        # stays on one line; SSH arguments are quoted with shlex.join below.
+        bindings = json.dumps(json.loads(bindings), separators=(',', ':'), ensure_ascii=True)
+        settings.append(('LEGAL_PLATFORM_OPERATOR_BINDINGS', bindings, 'platform-operators'))
+    configure_setting = r"""import json,os,re,shutil,sys,tempfile
 from pathlib import Path
 from datetime import datetime,timezone
+from urllib.parse import urlsplit
 p=Path(sys.argv[1])/'shared/production.env'
 key,value,label=sys.argv[2:5]
-if not re.fullmatch(r'[A-Z][A-Z0-9_]*',key) or not re.fullmatch(r'[A-Za-z0-9,-]+',value):
+if key not in ('HEMIA_AUTHORIZATION_MODE','LEGAL_PLATFORM_ORGANIZATION_IDS','LEGAL_PLATFORM_OPERATOR_BINDINGS') or not re.fullmatch(r'[a-z-]+',label):
     raise ValueError('Invalid setting')
 if not p.is_file() or p.stat().st_mode & 0o077:
     raise ValueError('Expected private production.env')
 old=p.read_text()
+def prior(name):
+    values=re.findall(r'^'+name+r'=([^\r\n]*)',old,re.M)
+    if len(values)>1: raise ValueError('Duplicate authorization setting')
+    return values[0] if values else ''
+def org_ids(raw):
+    ids=[v.strip().lower() for v in raw.split(',') if v.strip()]
+    if len(set(ids))!=len(ids) or not all(re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}',v) for v in ids):
+        raise ValueError('Invalid platform organizations')
+    return ids
+def operator_bindings(raw,organizations):
+    items=json.loads(raw or '[]')
+    if not isinstance(items,list) or len(items)>100: raise ValueError('Invalid operator bindings')
+    seen=set()
+    for item in items:
+        if not isinstance(item,dict) or set(item)!=set(('identityIssuer','subjectId','organizationId','applicationIds')):
+            raise ValueError('Invalid operator binding fields')
+        issuer,subject,org,apps=(item[k] for k in ('identityIssuer','subjectId','organizationId','applicationIds'))
+        if not isinstance(issuer,str) or not 1<=len(issuer)<=2048 or re.search(r'[\s\x00-\x1f\x7f-\x9f]',issuer) or not re.match(r'https://',issuer,re.I) or '\\' in issuer:
+            raise ValueError('Invalid identity issuer')
+        url=urlsplit(issuer)
+        if url.scheme!='https' or not url.hostname or '@' in url.netloc or '?' in issuer or '#' in issuer:
+            raise ValueError('Invalid identity issuer')
+        url.port
+        if not isinstance(subject,str) or not 1<=len(subject)<=255 or re.search(r'[\s\x00-\x1f\x7f-\x9f]',subject):
+            raise ValueError('Invalid operator subject')
+        if not isinstance(org,str) or not re.fullmatch(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}',org):
+            raise ValueError('Invalid operator organization')
+        if not isinstance(apps,list) or not 1<=len(apps)<=1000 or not all(isinstance(a,str) and re.fullmatch(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}',a) for a in apps):
+            raise ValueError('Invalid operator applications')
+        normalized=[a.lower() for a in apps]
+        if len(set(normalized))!=len(normalized): raise ValueError('Duplicate operator applications')
+        identity=(issuer,subject,org.lower())
+        if identity in seen: raise ValueError('Duplicate operator binding')
+        if org.lower() in organizations: raise ValueError('Operator organization also has broad access')
+        seen.add(identity)
+        item['organizationId']=org.lower()
+        item['applicationIds']=normalized
+    return json.dumps(items,separators=(',', ':'),ensure_ascii=True)
+if key=='HEMIA_AUTHORIZATION_MODE':
+    if value not in ('roles','authenticated'): raise ValueError('Invalid authorization mode')
+elif key=='LEGAL_PLATFORM_ORGANIZATION_IDS':
+    ids=org_ids(value)
+    operator_bindings(prior('LEGAL_PLATFORM_OPERATOR_BINDINGS'),ids)
+    value=','.join(ids)
+else:
+    value=operator_bindings(value,org_ids(prior('LEGAL_PLATFORM_ORGANIZATION_IDS')))
 kept=re.sub(r'^'+key+r'=.*\n?', '', old, flags=re.M).rstrip()
 new=(kept+'\n' if kept else '')+key+'='+value+'\n'
 if old != new:
@@ -71,7 +125,7 @@ if old != new:
         os.replace(tmp,p)
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
-print(key+'='+value)
+print(key+' configured')
 """
     for key, value, label in settings:
         subprocess.run(ssh + [shlex.join(['python3', '-c', configure_setting, root, key, value, label])], check=True)

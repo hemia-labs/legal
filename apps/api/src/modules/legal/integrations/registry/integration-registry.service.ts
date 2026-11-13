@@ -6,12 +6,16 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource, EntityManager } from 'typeorm';
-import type { LegalRequest } from '../../../../common/types/legal-request';
+import type {
+  LegalActor,
+  LegalRequest,
+} from '../../../../common/types/legal-request';
+import type { PlatformOperatorBinding } from '../../../../config/authorization.config';
 import {
-  LegalAuthorization,
   grantsFor,
   consumerOrganizationsAllowed,
   isPlatformOperator,
+  isScopedPlatformOperator,
 } from '../../authorization/legal-authorization';
 import {
   serviceUrl,
@@ -103,17 +107,24 @@ export class IntegrationRegistryService {
     );
   }
   /** Platform operators manage system-wide policies in authenticated mode. */
-  platformOperatorFor(authorization: LegalAuthorization | undefined) {
-    return isPlatformOperator(
-      authorization,
-      this.config.get<string[]>('authorization.platformOrganizationIds', []),
+  platformOperatorFor(actor: LegalActor | undefined, applicationId: string) {
+    return (
+      isPlatformOperator(
+        actor?.authorization,
+        this.config.get<string[]>('authorization.platformOrganizationIds', []),
+      ) ||
+      isScopedPlatformOperator(
+        actor,
+        applicationId,
+        this.config.get<PlatformOperatorBinding[]>(
+          'authorization.platformOperatorBindings',
+          [],
+        ),
+      )
     );
   }
-  private platformOperator(req: LegalRequest | undefined) {
-    return this.platformOperatorFor(req?.actor?.authorization);
-  }
   private async consumerAllowed(
-    req: LegalRequest,
+    req: Pick<LegalRequest, 'actor'>,
     row: ExternalSource,
     manager: DataSource | EntityManager = this.db,
     lock = false,
@@ -128,8 +139,23 @@ export class IntegrationRegistryService {
     return consumerOrganizationsAllowed(
       req.actor.authorization,
       organizations.map((organization) => organization.organization_id),
-      this.platformOperator(req),
+      this.platformOperatorFor(req.actor, row.application_id),
     );
+  }
+
+  async canManageSource(
+    actor: LegalActor,
+    sourceId: string,
+    applicationId: string,
+    manager: DataSource | EntityManager = this.db,
+    lock = false,
+  ): Promise<boolean> {
+    if (!actor.authorization?.authenticatedOrganizationId) return true;
+    const [source]: ExternalSource[] = await manager.query(
+      `SELECT id,application_id FROM external_identity_sources WHERE id=$1 AND application_id=$2${lock ? ' FOR SHARE' : ''}`,
+      [sourceId, applicationId],
+    );
+    return !!source && this.consumerAllowed({ actor }, source, manager, lock);
   }
 
   async list(req: LegalRequest) {
@@ -168,7 +194,7 @@ export class IntegrationRegistryService {
         organizations.map((organization) =>
           String(organization.organizationId),
         ),
-        this.platformOperator(req),
+        this.platformOperatorFor(req?.actor, row.application_id),
       )
     )
       throw new ForbiddenException('Integration outside consumer scope');
@@ -286,6 +312,19 @@ export class IntegrationRegistryService {
         throw new ForbiddenException('Integration outside operator scope');
       if (old && !(await this.consumerAllowed(req, old, m, true)))
         throw new ForbiddenException('Integration outside consumer scope');
+      if (
+        old &&
+        old.application_id !== application.id &&
+        !(await this.consumerAllowed(
+          req,
+          { ...old, application_id: application.id },
+          m,
+          true,
+        ))
+      )
+        throw new ForbiddenException(
+          'Integration outside target application scope',
+        );
       const permission = id
         ? 'legal.integrations.edit'
         : 'legal.integrations.create';
