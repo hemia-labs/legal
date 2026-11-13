@@ -246,26 +246,6 @@ function allPermissions(): string[] {
   return [...new Set(LEGAL_ROLES.flatMap((role) => [...role.permissions]))];
 }
 
-/**
- * Authenticated-mode members of a configured platform organization operate
- * application-wide document sets. Shared integration configuration does not
- * require a platform organization.
- */
-export function isPlatformOperator(
-  auth: LegalAuthorization | undefined,
-  platformOrganizationIds: readonly string[],
-): boolean {
-  const selected = auth?.authenticatedOrganizationId;
-  return (
-    !!selected &&
-    uuid(selected) &&
-    (auth?.expiresAt ?? 0) > Date.now() / 1000 &&
-    platformOrganizationIds.some(
-      (id) => id.toLowerCase() === selected.toLowerCase(),
-    )
-  );
-}
-
 // Machine grants stay organization-bound. Integration catalog callers can allow
 // shared configuration, never a policy restricted to another organization.
 export function consumerOrganizationsAllowed(

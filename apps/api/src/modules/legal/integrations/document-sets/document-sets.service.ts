@@ -118,15 +118,6 @@ export class DocumentSetsService {
     actor: LegalActor,
     permission: string,
   ) {
-    // A consumer-organization assignment cannot edit an application-wide policy,
-    // unless the selected organization is a configured platform operator.
-    if (
-      actor.authorization?.authenticatedOrganizationId &&
-      !this.registry.platformOperatorFor(actor.authorization)
-    )
-      throw new ForbiddenException(
-        'Application-wide policy management required',
-      );
     const scope = scopePredicate(
       actor.authorization,
       permission,
@@ -148,14 +139,26 @@ export class DocumentSetsService {
       'SELECT * FROM legal_document_sets WHERE application_id=$1 ORDER BY key',
       [applicationId],
     );
-    return rows.map((r) => ({
-      applicationId: r.application_id,
-      key: r.key,
-      name: r.name,
-      revision: r.revision,
-      configuration: r.configuration,
-      effectiveFrom: r.effective_from,
-    }));
+    const visible = await Promise.all(
+      rows.map(async (row) =>
+        (await this.registry.consumerAllowed(
+          actor.authorization,
+          row.source_id,
+        ))
+          ? row
+          : null,
+      ),
+    );
+    return visible
+      .filter((row) => row !== null)
+      .map((r) => ({
+        applicationId: r.application_id,
+        key: r.key,
+        name: r.name,
+        revision: r.revision,
+        configuration: r.configuration,
+        effectiveFrom: r.effective_from,
+      }));
   }
   async save(
     applicationId: string,
@@ -210,6 +213,15 @@ export class DocumentSetsService {
         throw new BadRequestException(
           'Enabled integration for this application required',
         );
+      if (
+        !(await this.registry.consumerAllowed(
+          actor.authorization,
+          dto.sourceId,
+          m,
+          true,
+        ))
+      )
+        throw new ForbiddenException('Integration outside consumer scope');
       if (dto.verification === 'verified_session') {
         const service = resolveVerificationService(
           source.services,
@@ -239,6 +251,18 @@ export class DocumentSetsService {
         'SELECT * FROM legal_document_sets WHERE application_id=$1 AND key=$2 FOR UPDATE',
         [applicationId, key],
       );
+      // A visible destination must not allow taking over another organization's set.
+      if (
+        old &&
+        old.source_id !== dto.sourceId &&
+        !(await this.registry.consumerAllowed(
+          actor.authorization,
+          old.source_id,
+          m,
+          true,
+        ))
+      )
+        throw new ForbiddenException('Document set outside consumer scope');
       if (
         (old && dto.expectedRevision !== old.revision) ||
         (!old && dto.expectedRevision)

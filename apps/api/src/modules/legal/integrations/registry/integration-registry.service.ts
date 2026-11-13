@@ -11,7 +11,6 @@ import {
   LegalAuthorization,
   grantsFor,
   consumerOrganizationsAllowed,
-  isPlatformOperator,
 } from '../../authorization/legal-authorization';
 import {
   serviceUrl,
@@ -102,29 +101,22 @@ export class IntegrationRegistryService {
           g.resource_scope.ids.includes(row.application_id)),
     );
   }
-  /** Platform organization restriction used only by application document sets. */
-  platformOperatorFor(authorization: LegalAuthorization | undefined) {
-    return isPlatformOperator(
-      authorization,
-      this.config.get<string[]>('authorization.platformOrganizationIds', []),
-    );
-  }
-  private async consumerAllowed(
-    req: LegalRequest,
-    row: ExternalSource,
+  async consumerAllowed(
+    authorization: LegalAuthorization | undefined,
+    sourceId: string,
     manager: DataSource | EntityManager = this.db,
     lock = false,
   ) {
-    if (!req.actor?.authorization?.authenticatedOrganizationId) return true;
+    if (!authorization?.authenticatedOrganizationId) return true;
     const organizations = await manager.query<
       Array<{ organization_id: string }>
     >(
       `SELECT organization_id FROM external_identity_source_organizations WHERE source_id=$1${lock ? ' FOR SHARE' : ''}`,
-      [row.id],
+      [sourceId],
     );
     // Shared integration configuration is catalog data; explicit organization restrictions still apply.
     return consumerOrganizationsAllowed(
-      req.actor.authorization,
+      authorization,
       organizations.map((organization) => organization.organization_id),
       true,
     );
@@ -140,7 +132,7 @@ export class IntegrationRegistryService {
       rows
         .filter((row) => this.allowed(req, 'legal.integrations.view', row))
         .map(async (row) =>
-          (await this.consumerAllowed(req, row))
+          (await this.consumerAllowed(req.actor?.authorization, row.id))
             ? this.project(row, this.db, req)
             : null,
         ),
@@ -282,7 +274,10 @@ export class IntegrationRegistryService {
         : [];
       if (id && !old)
         throw new ForbiddenException('Integration outside operator scope');
-      if (old && !(await this.consumerAllowed(req, old, m, true)))
+      if (
+        old &&
+        !(await this.consumerAllowed(req.actor?.authorization, old.id, m, true))
+      )
         throw new ForbiddenException('Integration outside consumer scope');
       const permission = id
         ? 'legal.integrations.edit'
@@ -414,7 +409,7 @@ export class IntegrationRegistryService {
       if (
         !row ||
         !this.allowed(req, 'legal.integrations.disable', row) ||
-        !(await this.consumerAllowed(req, row, m, true))
+        !(await this.consumerAllowed(req.actor?.authorization, row.id, m, true))
       )
         throw new ForbiddenException();
       await m.query(
