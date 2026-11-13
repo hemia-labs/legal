@@ -224,7 +224,9 @@ export class DocumentSetsService {
         );
       if (
         dto.usage !== 'account' &&
-        docs.some((doc) => documentPolicy(doc.document_type)?.workflow !== 'public')
+        docs.some(
+          (doc) => documentPolicy(doc.document_type)?.workflow !== 'public',
+        )
       )
         throw new BadRequestException(
           'Internal documents require an account set',

@@ -1749,7 +1749,9 @@ export class LegalService {
     const published = await this.versions.findOne({
       where: {
         documentId: document.id,
-        status: accountVersionId ? In(['published', 'superseded']) : 'published',
+        status: accountVersionId
+          ? In(['published', 'superseded'])
+          : 'published',
         ...(accountVersionId ? { id: accountVersionId } : {}),
         ...(version ? { version } : {}),
       },
@@ -1760,7 +1762,9 @@ export class LegalService {
     const publication = await this.publications.findOne({
       where: {
         documentVersionId: published.id,
-        status: accountVersionId ? In(['published', 'superseded']) : 'published',
+        status: accountVersionId
+          ? In(['published', 'superseded'])
+          : 'published',
         ...(accountVersionId ? { organizationId: IsNull() } : {}),
       },
     });
