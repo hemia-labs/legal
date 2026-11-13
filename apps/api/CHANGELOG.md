@@ -1,5 +1,11 @@
 # api
 
+## 0.6.1
+
+### Patch Changes
+
+- 0f324b7: Allow linked internal HTML publications in authenticated account document sets and preserve access to the exact accepted version.
+
 ## 0.6.0
 
 ### Minor Changes
