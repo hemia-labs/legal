@@ -927,8 +927,8 @@ describe('authenticated integration consumer scope', () => {
     code: 'balanz',
     name: 'Balanz',
   };
-  it.each([{ ids: [] }, { ids: [foreign] }, { ids: [selected, foreign] }])(
-    'rejects disabling global or foreign integrations %j',
+  it.each([{ ids: [foreign] }, { ids: [selected, foreign] }])(
+    'rejects disabling integrations restricted to foreign organizations %j',
     async ({ ids }) => {
       const query = jest.fn((sql: string) =>
         sql.startsWith('SELECT * FROM external_identity_sources')
@@ -950,7 +950,30 @@ describe('authenticated integration consumer scope', () => {
       );
     },
   );
-  it('filters global and foreign integrations from human listing', async () => {
+  it.each([{ ids: [] }, { ids: [selected] }])(
+    'allows disabling shared and own integrations without a platform allowlist %j',
+    async ({ ids }) => {
+      const query = jest.fn((sql: string) =>
+        sql.startsWith('SELECT * FROM external_identity_sources')
+          ? [source]
+          : sql.startsWith('SELECT organization_id')
+            ? ids.map((organization_id) => ({ organization_id }))
+            : [],
+      );
+      const db = {
+        transaction: (work: (m: unknown) => unknown) => work({ query }),
+      } as unknown as DataSource;
+      const registry = new IntegrationRegistryService(db, config, {} as never);
+      await expect(registry.disable(req, source.id)).resolves.toEqual({
+        id: source.id,
+        enabled: false,
+      });
+      expect(query.mock.calls.some(([sql]) => sql.startsWith('UPDATE'))).toBe(
+        true,
+      );
+    },
+  );
+  it('lists shared and own integrations while filtering foreign and mixed scopes', async () => {
     const rows = [[], [foreign], [selected, foreign], [selected]].map(
       (ids, i) => ({ ...source, id: String(i), ids }),
     );
@@ -972,11 +995,12 @@ describe('authenticated integration consumer scope', () => {
       {} as never,
     );
     await expect(registry.list(req)).resolves.toEqual([
+      expect.objectContaining({ id: '0' }),
       expect.objectContaining({ id: '3' }),
     ]);
   });
-  it.each([{ ids: [] }, { ids: [foreign] }, { ids: [selected, foreign] }])(
-    'rejects editing global or foreign integrations %j',
+  it.each([{ ids: [foreign] }, { ids: [selected, foreign] }])(
+    'rejects editing integrations restricted to foreign organizations %j',
     async ({ ids }) => {
       const f = fixture();
       const query = jest.fn((sql: string) => {

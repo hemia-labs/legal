@@ -102,15 +102,12 @@ export class IntegrationRegistryService {
           g.resource_scope.ids.includes(row.application_id)),
     );
   }
-  /** Platform operators manage system-wide policies in authenticated mode. */
+  /** Platform organization restriction used only by application document sets. */
   platformOperatorFor(authorization: LegalAuthorization | undefined) {
     return isPlatformOperator(
       authorization,
       this.config.get<string[]>('authorization.platformOrganizationIds', []),
     );
-  }
-  private platformOperator(req: LegalRequest | undefined) {
-    return this.platformOperatorFor(req?.actor?.authorization);
   }
   private async consumerAllowed(
     req: LegalRequest,
@@ -125,10 +122,11 @@ export class IntegrationRegistryService {
       `SELECT organization_id FROM external_identity_source_organizations WHERE source_id=$1${lock ? ' FOR SHARE' : ''}`,
       [row.id],
     );
+    // Shared integration configuration is catalog data; explicit organization restrictions still apply.
     return consumerOrganizationsAllowed(
       req.actor.authorization,
       organizations.map((organization) => organization.organization_id),
-      this.platformOperator(req),
+      true,
     );
   }
 
@@ -168,7 +166,7 @@ export class IntegrationRegistryService {
         organizations.map((organization) =>
           String(organization.organizationId),
         ),
-        this.platformOperator(req),
+        true,
       )
     )
       throw new ForbiddenException('Integration outside consumer scope');
@@ -355,7 +353,7 @@ export class IntegrationRegistryService {
       } catch (e) {
         if ((e as { code?: string }).code === '23505')
           throw new ConflictException(
-            'El sistema ya tiene una integración. Edítala desde la lista; si no aparece, la administra la organización de plataforma.',
+            'El sistema ya tiene una integración. Edítala desde la lista.',
           );
         throw e;
       }
