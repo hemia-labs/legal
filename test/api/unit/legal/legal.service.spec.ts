@@ -718,7 +718,7 @@ describe('LegalService', () => {
     ).resolves.toMatchObject({ sourceKind: 'pdf' });
   });
 
-  it('returns the selected public locale and acceptance summary', async () => {
+  it('serves only the current public HTML and acceptance summary', async () => {
     const document = await createDocument(service);
     const version = await versions.save({
       id: 'version-public',
@@ -726,7 +726,7 @@ describe('LegalService', () => {
       version: '1.0.0',
       status: 'published',
       contentHash: 'b'.repeat(64),
-      effectiveFrom: new Date('2026-08-01T00:00:00.000Z'),
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
     } as LegalDocumentVersion);
     await publications.save({
       id: 'publication-public',
@@ -788,25 +788,45 @@ describe('LegalService', () => {
       expiresAt: new Date('2026-08-01T00:00:00.000Z'),
     });
 
+    await versions.save([
+      {
+        ...version,
+        id: 'version-future',
+        version: '2.0.0',
+        effectiveFrom: new Date(Date.now() + 86_400_000),
+      },
+      {
+        ...version,
+        id: 'version-expired',
+        version: '0.9.0',
+        effectiveUntil: new Date(Date.now() - 86_400_000),
+      },
+    ]);
+
     const response = await service.getPublicDocument(
       document.applicationId,
       document.key,
       'es-MX',
     );
 
-    expect(response.artifacts.source).toMatchObject({
-      url: 'https://storage.test/document.html',
-      contentType: 'text/markdown',
-      sha256: 'd'.repeat(64),
-    });
-    expect(response.artifacts.html).toBeDefined();
-    expect(storage.signedDownloadUrl).toHaveBeenCalledWith(
-      expect.objectContaining({
-        key: 'published/source.md',
-        versionId: 'source-version',
+    expect(response.artifacts).toEqual({
+      html: expect.objectContaining({
+        url: 'https://storage.test/document.html',
+        contentType: 'text/html',
       }),
-      'terms.md',
-    );
+    });
+    expect(storage.signedDownloadUrl).toHaveBeenCalledTimes(1);
+    expect(response.version.version).toBe('1.0.0');
+    for (const unavailable of ['2.0.0', '0.9.0']) {
+      await expect(
+        service.getPublicDocument(
+          document.applicationId,
+          document.key,
+          'es-MX',
+          unavailable,
+        ),
+      ).rejects.toThrow('Published version not found');
+    }
     expect(response.document.locale).toBe('es-MX');
     expect(response.version.contentHash).toBe('b'.repeat(64));
     expect(response.acceptance).toMatchObject({
@@ -1279,14 +1299,27 @@ class Repo<T extends { id: string; createdAt?: Date; updatedAt?: Date }> {
 }
 
 function matches<T>(row: T, where: Partial<T>) {
-  return Object.entries(where).every(([key, value]) => {
-    // SQL authorization is exercised against PostgreSQL in consumer integration tests.
-    if (value instanceof FindOperator && value.type === 'raw') return true;
-    if (value instanceof FindOperator && value.type === 'in') {
-      return (value.value as unknown[]).includes(row[key as keyof T]);
-    }
-    return row[key as keyof T] === value;
-  });
+  return Object.entries(where).every(([key, condition]) =>
+    matchesValue(row[key as keyof T], condition),
+  );
+}
+
+function matchesValue(value: unknown, condition: unknown): boolean {
+  if (!(condition instanceof FindOperator)) return value === condition;
+  // SQL authorization is exercised against PostgreSQL in consumer integration tests.
+  if (condition.type === 'raw') return true;
+  if (condition.type === 'in') return condition.value.includes(value);
+  if (condition.type === 'or') {
+    return (condition.value as FindOperator<unknown>[]).some((option) =>
+      matchesValue(value, option),
+    );
+  }
+  if (condition.type === 'isNull') return value == null;
+  if (value instanceof Date && condition.value instanceof Date) {
+    if (condition.type === 'lessThanOrEqual') return value <= condition.value;
+    if (condition.type === 'moreThan') return value > condition.value;
+  }
+  return false;
 }
 
 async function createDocument(service: LegalService) {

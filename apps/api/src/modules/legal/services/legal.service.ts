@@ -15,7 +15,11 @@ import {
   EntityManager,
   FindOptionsWhere,
   ILike,
+  IsNull,
+  LessThanOrEqual,
+  MoreThan,
   Not,
+  Or,
   Repository,
 } from 'typeorm';
 import type {
@@ -1703,6 +1707,7 @@ export class LegalService {
     documentKey: string,
     locale: string,
     version?: string,
+    { includeAllArtifacts = false } = {},
   ) {
     const document = await this.documents.findOne({
       where: {
@@ -1719,13 +1724,19 @@ export class LegalService {
       throw new NotFoundException('Document not found');
     }
 
+    const now = new Date();
     const published = await this.versions.findOne({
       where: {
         documentId: document.id,
         status: 'published',
+        effectiveFrom: Or(IsNull(), LessThanOrEqual(now)),
+        effectiveUntil: Or(IsNull(), MoreThan(now)),
         ...(version ? { version } : {}),
       },
-      order: { effectiveFrom: 'DESC', createdAt: 'DESC' },
+      order: {
+        effectiveFrom: { direction: 'DESC', nulls: 'LAST' },
+        createdAt: 'DESC',
+      },
     });
     if (!published) throw new NotFoundException('Published version not found');
 
@@ -1736,7 +1747,10 @@ export class LegalService {
       throw new NotFoundException('Published storage not found');
 
     const assets = await this.publicationAssets.find({
-      where: { publicationId: publication.id },
+      where: {
+        publicationId: publication.id,
+        ...(includeAllArtifacts ? {} : { kind: 'html' }),
+      },
     });
     if (policy.requiresHtml && !assets.some((asset) => asset.kind === 'html')) {
       throw new NotFoundException('Published HTML artifact not found');

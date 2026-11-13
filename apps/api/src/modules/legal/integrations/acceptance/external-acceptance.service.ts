@@ -163,6 +163,7 @@ export class ExternalAcceptanceService {
           d.key,
           d.locale,
           d.version,
+          { includeAllArtifacts: true },
         ),
       ),
     );

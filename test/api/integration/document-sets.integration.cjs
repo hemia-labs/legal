@@ -121,8 +121,10 @@ let app;
       "INSERT INTO document_versions(id,document_id,version,content_hash) VALUES($1,$2,'1.0.0',$3)",
       [version, document, 'a'.repeat(64)],
     );
+    let publicationLookups = 0;
     const legal = {
       getPublicDocument: async (appId, key, locale, v) => {
+        publicationLookups++;
         const [r] = await db.query(
           'SELECT v.*,d.title,d.id docid FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE d.application_id=$1 AND d.key=$2 AND d.locale=$3 AND v.version=$4',
           [appId, key, locale, v],
@@ -237,6 +239,16 @@ let app;
     response = await http('GET', publicPath);
     assert.equal(response.status, 200, JSON.stringify(response));
     const snapshot = response.body;
+    assert.equal(
+      publicationLookups,
+      1,
+      'Resolve each publication once per manifest',
+    );
+    assert.equal(snapshot.documents[0].documentVersionId, version);
+    assert.equal(
+      snapshot.documents[0].artifacts.html.url,
+      'https://storage.example/document.html',
+    );
     const repeated = await Promise.all(
       Array.from({ length: 5 }, () => http('GET', publicPath)),
     );

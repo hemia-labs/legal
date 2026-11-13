@@ -270,96 +270,121 @@ export class DocumentSetsService {
       throw new ForbiddenException('Integration outside client policy');
     return s;
   }
-  private async documents(set: SetRow, locale: string): Promise<Doc[]> {
-    const docs: Doc[] = [];
-    for (const item of set.configuration.documents) {
-      const [v]: Array<{ key: string; version: string }> = await this.db.query(
-        `SELECT d.key,v.version FROM documents d JOIN document_versions v ON v.document_id=d.id
+  private async publications(set: SetRow, locale: string) {
+    const items = set.configuration.documents;
+    const rows: Array<{ id: string; key: string; version: string }> =
+      await this.db.query(
+        `SELECT DISTINCT ON (d.id) d.id,d.key,v.version FROM documents d JOIN document_versions v ON v.document_id=d.id
         JOIN external_identity_source_documents x ON x.document_id=d.id AND x.source_id=$3
-        WHERE d.id=$1 AND d.application_id=$2 AND d.locale=$4 AND d.status='active' AND d.deleted_at IS NULL
+        WHERE d.id=ANY($1::uuid[]) AND d.application_id=$2 AND d.locale=$4 AND d.status='active' AND d.deleted_at IS NULL
           AND v.status='published' AND v.content_hash IS NOT NULL AND (v.effective_from IS NULL OR v.effective_from<=now()) AND (v.effective_until IS NULL OR v.effective_until>now())
-        ORDER BY v.effective_from DESC NULLS LAST,v.created_at DESC LIMIT 1`,
-        [item.documentId, set.application_id, set.source_id, locale],
+        ORDER BY d.id,v.effective_from DESC NULLS LAST,v.created_at DESC`,
+        [
+          items.map((item) => item.documentId),
+          set.application_id,
+          set.source_id,
+          locale,
+        ],
       );
-      if (!v)
-        throw new NotFoundException(
-          'Document set has no current publication for this locale',
-        );
-      const published = await this.legal.getPublicDocument(
-        set.application_id,
-        v.key,
-        locale,
-        v.version,
+    const versions = new Map(rows.map((row) => [row.id, row]));
+    const publications: Array<{
+      document: Doc;
+      artifacts: Awaited<
+        ReturnType<LegalService['getPublicDocument']>
+      >['artifacts'];
+    }> = [];
+    // Bound concurrent lookups for sets that contain many documents.
+    const batchSize = 4;
+    for (let offset = 0; offset < items.length; offset += batchSize) {
+      const batch = await Promise.all(
+        items.slice(offset, offset + batchSize).map(async (item) => {
+          const v = versions.get(item.documentId);
+          if (!v)
+            throw new NotFoundException(
+              'Document set has no current publication for this locale',
+            );
+          const published = await this.legal.getPublicDocument(
+            set.application_id,
+            v.key,
+            locale,
+            v.version,
+          );
+          if (
+            !valid(published.version.effectiveFrom) ||
+            !valid(published.version.effectiveUntil) ||
+            !published.contentHash
+          )
+            throw new ConflictException('Invalid publication');
+          return {
+            document: {
+              documentId: item.documentId,
+              documentVersionId: published.version.id,
+              documentKey: v.key,
+              title: published.document.title,
+              version: v.version,
+              contentHash: published.contentHash,
+              requiredAction: item.requiredAction,
+              blocking: item.blocking,
+              requireReacceptance: item.requireReacceptance,
+              deadline: item.deadline ?? null,
+            },
+            artifacts: published.artifacts,
+          };
+        }),
       );
-      if (
-        !valid(published.version.effectiveFrom) ||
-        !valid(published.version.effectiveUntil) ||
-        !published.contentHash
-      )
-        throw new ConflictException('Invalid publication');
-      docs.push({
-        documentId: item.documentId,
-        documentVersionId: published.version.id,
-        documentKey: v.key,
-        title: published.document.title,
-        version: v.version,
-        contentHash: published.contentHash,
-        requiredAction: item.requiredAction,
-        blocking: item.blocking,
-        requireReacceptance: item.requireReacceptance,
-        deadline: item.deadline ?? null,
-      });
+      publications.push(...batch);
     }
-    return docs;
+    return publications;
   }
   async published(applicationId: string, key: string, locale: string) {
-    const set = await this.set(applicationId, key),
-      documents = await this.documents(set, locale);
+    const set = await this.set(applicationId, key);
+    const publications = await this.publications(set, locale);
+    const documents = publications.map(({ document }) => document);
     const fingerprint = hash({ revision: set.revision, locale, documents });
-    const snapshot = await this.db.transaction(async (m) => {
-      const current = await this.set(applicationId, key, m, true);
-      if (current.revision !== set.revision)
-        throw new ConflictException('DOCUMENT_SET_CHANGED');
-      // Serialize anonymous reads to reuse a snapshot, rather than create a row per GET.
-      await m.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-        set.id + fingerprint,
-      ]);
-      const [existing]: Snapshot[] = await m.query(
+    const findSnapshot = async (db: DataSource | EntityManager) => {
+      const [snapshot]: Snapshot[] = await db.query(
         'SELECT * FROM legal_document_set_snapshots WHERE set_id=$1 AND fingerprint=$2 AND expires_at>now() ORDER BY created_at DESC LIMIT 1',
         [set.id, fingerprint],
       );
-      if (existing) return existing;
-      const [created]: Snapshot[] = await m.query(
-        `INSERT INTO legal_document_set_snapshots(set_id,source_id,application_id,set_key,set_revision,locale,fingerprint,configuration,documents) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb) RETURNING *`,
-        [
-          set.id,
-          set.source_id,
-          applicationId,
-          key,
-          set.revision,
-          locale,
-          fingerprint,
-          JSON.stringify(set.configuration),
-          JSON.stringify(documents),
-        ],
-      );
-      return created;
-    });
-    const publicDocs: Array<
-      Doc & {
-        artifacts: Awaited<
-          ReturnType<LegalService['getPublicDocument']>
-        >['artifacts'];
-      }
-    > = [];
-    for (const d of snapshot.documents) {
-      const publication = await this.legal.getPublicDocument(
-        applicationId,
-        d.documentKey,
-        locale,
-        d.version,
-      );
-      publicDocs.push({ ...d, artifacts: publication.artifacts });
+      return snapshot;
+    };
+    const assertCurrent = async (
+      db: DataSource | EntityManager,
+      lock = false,
+    ) => {
+      const current = await this.set(applicationId, key, db, lock);
+      if (current.revision !== set.revision)
+        throw new ConflictException('DOCUMENT_SET_CHANGED');
+    };
+
+    let snapshot = await findSnapshot(this.db);
+    if (snapshot) {
+      await assertCurrent(this.db);
+    } else {
+      snapshot = await this.db.transaction(async (m) => {
+        await assertCurrent(m, true);
+        // Serialize creation and recheck after a concurrent request commits.
+        await m.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+          set.id + fingerprint,
+        ]);
+        const existing = await findSnapshot(m);
+        if (existing) return existing;
+        const [created]: Snapshot[] = await m.query(
+          `INSERT INTO legal_document_set_snapshots(set_id,source_id,application_id,set_key,set_revision,locale,fingerprint,configuration,documents) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb) RETURNING *`,
+          [
+            set.id,
+            set.source_id,
+            applicationId,
+            key,
+            set.revision,
+            locale,
+            fingerprint,
+            JSON.stringify(set.configuration),
+            JSON.stringify(documents),
+          ],
+        );
+        return created;
+      });
     }
     return {
       applicationId,
@@ -367,7 +392,10 @@ export class DocumentSetsService {
       revision: set.revision,
       snapshotToken: snapshot.id,
       expiresAt: snapshot.expires_at.toISOString(),
-      documents: publicDocs,
+      documents: publications.map(({ document, artifacts }) => ({
+        ...document,
+        artifacts,
+      })),
     };
   }
   private async assurance(
@@ -569,7 +597,8 @@ export class DocumentSetsService {
     const source = await this.source(caller, set.source_id, dto.organizationId);
     if (set.configuration.requiresOrganization && !dto.organizationId)
       throw new ForbiddenException('Organization required');
-    const docs = await this.documents(set, dto.locale);
+    const publications = await this.publications(set, dto.locale);
+    const docs = publications.map(({ document }) => document);
     const rows: Array<{ documents: Doc[]; assurance: Receipt['assurance'] }> =
       await this.db.query(
         `SELECT s.documents,r.assurance FROM legal_evidence_receipts r JOIN legal_document_set_snapshots s ON s.id=r.snapshot_id WHERE r.source_id=$1 AND r.subject_id=$2 AND r.organization_id IS NOT DISTINCT FROM $3 AND s.set_id=$4 AND s.locale=$5 AND ($6::uuid IS NULL OR r.id=$6)`,
