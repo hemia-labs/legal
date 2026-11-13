@@ -1,5 +1,12 @@
 # api
 
+## 0.6.3
+
+### Patch Changes
+
+- e822861: Remove the platform organization UUID allowlist for authenticated document-set administration. Filter sets by their integration's organization scope and validate both existing and destination integrations on edits. Preserve consumer evidence and machine authorization isolation.
+- 31539c3: Allow eligible authenticated users to list and edit shared Legal integrations without a platform organization allowlist. Keep organization-restricted integrations, machine policies and consumer evidence isolated.
+
 ## 0.6.2
 
 ### Patch Changes
