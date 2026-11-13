@@ -264,6 +264,10 @@ function flow(overrides: Record<string, unknown> = {}) {
     Promise<Record<string, unknown>[]>,
     [string, unknown[]?]
   > = jest.fn((sql: string): Promise<Record<string, unknown>[]> => {
+    if (sql.startsWith('SELECT id FROM documents'))
+      return Promise.resolve(
+        row.documents.map((doc) => ({ id: doc.documentId })),
+      );
     if (sql.includes('SELECT * FROM external_acceptance_requests WHERE id='))
       return Promise.resolve([row]);
     if (
@@ -394,6 +398,8 @@ describe('validation resolves the integration from the acceptance', () => {
   };
   function fixture() {
     const query = jest.fn().mockImplementation((sql: string) => {
+      if (sql.startsWith('SELECT id FROM documents'))
+        return Promise.resolve(source.document_ids.map((id) => ({ id })));
       if (sql.includes('SELECT external_identity_source_id'))
         return Promise.resolve([{ source_id: source.id }]);
       if (sql.includes('SELECT a.id AS acceptance_id'))

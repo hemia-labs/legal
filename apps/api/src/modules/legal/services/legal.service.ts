@@ -1709,18 +1709,47 @@ export class LegalService {
     version?: string,
     { includeAllArtifacts = false } = {},
   ) {
+    return this.publishedDocument(
+      applicationId,
+      { key: documentKey, locale },
+      version,
+      undefined,
+      { includeAllArtifacts },
+    );
+  }
+
+  async getAccountDocument(
+    applicationId: string,
+    documentId: string,
+    versionId: string,
+    locale: string,
+  ) {
+    return this.publishedDocument(
+      applicationId,
+      { id: documentId, locale },
+      undefined,
+      versionId,
+    );
+  }
+
+  private async publishedDocument(
+    applicationId: string,
+    documentLookup: { key?: string; id?: string; locale: string },
+    version?: string,
+    accountVersionId?: string,
+    { includeAllArtifacts = false } = {},
+  ) {
     const document = await this.documents.findOne({
       where: {
         applicationId,
-        key: documentKey,
-        locale,
+        ...documentLookup,
         status: 'active',
       },
       order: { createdAt: 'ASC' },
     });
     if (!document) throw new NotFoundException('Document not found');
     const policy = documentPolicy(document.documentType);
-    if (!policy || policy.workflow !== 'public') {
+    if (!policy || (!accountVersionId && policy.workflow !== 'public')) {
       throw new NotFoundException('Document not found');
     }
 
@@ -1728,9 +1757,15 @@ export class LegalService {
     const published = await this.versions.findOne({
       where: {
         documentId: document.id,
-        status: 'published',
-        effectiveFrom: Or(IsNull(), LessThanOrEqual(now)),
-        effectiveUntil: Or(IsNull(), MoreThan(now)),
+        status: accountVersionId
+          ? In(['published', 'superseded'])
+          : 'published',
+        ...(accountVersionId
+          ? { id: accountVersionId }
+          : {
+              effectiveFrom: Or(IsNull(), LessThanOrEqual(now)),
+              effectiveUntil: Or(IsNull(), MoreThan(now)),
+            }),
         ...(version ? { version } : {}),
       },
       order: {
@@ -1741,7 +1776,13 @@ export class LegalService {
     if (!published) throw new NotFoundException('Published version not found');
 
     const publication = await this.publications.findOne({
-      where: { documentVersionId: published.id, status: 'published' },
+      where: {
+        documentVersionId: published.id,
+        status: accountVersionId
+          ? In(['published', 'superseded'])
+          : 'published',
+        ...(accountVersionId ? { organizationId: IsNull() } : {}),
+      },
     });
     if (!publication)
       throw new NotFoundException('Published storage not found');
@@ -1752,7 +1793,16 @@ export class LegalService {
         ...(includeAllArtifacts ? {} : { kind: 'html' }),
       },
     });
-    if (policy.requiresHtml && !assets.some((asset) => asset.kind === 'html')) {
+    const downloadableAssets = accountVersionId
+      ? assets.filter(
+          (asset) =>
+            asset.kind === 'html' && asset.sha256 === published.contentHash,
+        )
+      : assets;
+    if (
+      (accountVersionId || policy.requiresHtml) &&
+      !downloadableAssets.some((asset) => asset.kind === 'html')
+    ) {
       throw new NotFoundException('Published HTML artifact not found');
     }
     const rules = await this.rules.find({
@@ -1763,7 +1813,7 @@ export class LegalService {
       },
     });
     const artifactEntries = await Promise.all(
-      assets.map(async (asset) => {
+      downloadableAssets.map(async (asset) => {
         const signed = await this.storage.signedDownloadUrl(
           {
             bucket: asset.s3Bucket,

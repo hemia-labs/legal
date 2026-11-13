@@ -17,10 +17,14 @@ import {
 } from '../integration.dto';
 import { IntegrationRequest } from './integration-auth.guard';
 import { LegalService } from '../../services/legal.service';
+import { LEGAL_DOCUMENT_TYPES } from '../../constants/document-types';
 import {
   LegalAcceptanceValidationService,
   Contract,
 } from '../../authorization/legal-acceptance-validation.service';
+const publicDocumentTypes = LEGAL_DOCUMENT_TYPES.filter(
+  (type) => type.workflow === 'public',
+).map((type) => type.code);
 type Document = {
   documentId: string;
   documentVersionId: string;
@@ -99,13 +103,26 @@ export class ExternalAcceptanceService {
       documentIds: s.document_ids,
     };
   }
+  private async publicDocumentIds(
+    source: ExternalSource,
+    manager: DataSource | EntityManager,
+  ) {
+    const linked = await manager.query<Array<{ id: string }>>(
+      'SELECT id FROM documents WHERE id=ANY($1::uuid[]) AND document_type=ANY($2::text[])',
+      [source.document_ids, publicDocumentTypes],
+    );
+    const publicIds = new Set(linked.map(({ id }) => id));
+    return source.document_ids.filter((id) => publicIds.has(id));
+  }
   private async documents(
     s: ExternalSource,
     organization: string,
     roles: string[],
     m: DataSource | EntityManager = this.db,
   ) {
-    const ids = s.document_ids;
+    const ids = await this.publicDocumentIds(s, m);
+    if (!ids.length)
+      throw new ConflictException('LEGAL_DOCUMENTS_NOT_CURRENT_OR_AMBIGUOUS');
     const rows: Document[] = await m.query(
       `SELECT d.id AS "documentId",v.id AS "documentVersionId",r.id AS "acceptanceRuleId",v.version,v.content_hash AS "contentHash",d.title,d.document_type AS "documentType",d.key,d.locale,r.acceptance_mode AS "acceptanceMode",r.role,
  (CASE WHEN r.organization_id IS NULL THEN 0 ELSE 1 END + CASE WHEN r.role IS NULL THEN 0 ELSE 1 END) AS specificity
@@ -390,7 +407,13 @@ export class ExternalAcceptanceService {
           applicationId: source.application_id,
         },
         roles,
-        { contract: this.contract(source), sourceId: source.id },
+        {
+          contract: {
+            ...this.contract(source),
+            documentIds: await this.publicDocumentIds(source, m),
+          },
+          sourceId: source.id,
+        },
         m,
       );
       if (

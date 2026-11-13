@@ -11,6 +11,7 @@ import {
   LegalAuthorization,
   grantsFor,
   consumerOrganizationsAllowed,
+  isPlatformOperator,
 } from '../../authorization/legal-authorization';
 import {
   serviceUrl,
@@ -19,11 +20,7 @@ import {
 import { SystemsService } from '../../systems/systems.service';
 import { legalAcceptanceConfiguration } from '../../systems/capability-schema';
 import { SaveIntegrationDto } from '../integration.dto';
-import { LEGAL_DOCUMENT_TYPES } from '../../constants/document-types';
 import type { IntegrationRequest } from '../acceptance/integration-auth.guard';
-const publicDocumentTypes = LEGAL_DOCUMENT_TYPES.filter(
-  (type) => type.workflow === 'public',
-).map((type) => type.code);
 // Document-set policies define acceptance requirements separately from publication.
 const acceptableDocumentSql = `EXISTS (
  SELECT 1 FROM document_versions v
@@ -105,6 +102,16 @@ export class IntegrationRegistryService {
           g.resource_scope.ids.includes(row.application_id)),
     );
   }
+  /** Platform operators manage system-wide policies in authenticated mode. */
+  platformOperatorFor(authorization: LegalAuthorization | undefined) {
+    return isPlatformOperator(
+      authorization,
+      this.config.get<string[]>('authorization.platformOrganizationIds', []),
+    );
+  }
+  private platformOperator(req: LegalRequest | undefined) {
+    return this.platformOperatorFor(req?.actor?.authorization);
+  }
   private async consumerAllowed(
     req: LegalRequest,
     row: ExternalSource,
@@ -121,6 +128,7 @@ export class IntegrationRegistryService {
     return consumerOrganizationsAllowed(
       req.actor.authorization,
       organizations.map((organization) => organization.organization_id),
+      this.platformOperator(req),
     );
   }
 
@@ -135,7 +143,7 @@ export class IntegrationRegistryService {
         .filter((row) => this.allowed(req, 'legal.integrations.view', row))
         .map(async (row) =>
           (await this.consumerAllowed(req, row))
-            ? this.project(row, this.db, req.actor.authorization)
+            ? this.project(row, this.db, req)
             : null,
         ),
     );
@@ -144,7 +152,7 @@ export class IntegrationRegistryService {
   private async project(
     row: ExternalSource,
     manager: DataSource | EntityManager = this.db,
-    authorization?: LegalAuthorization,
+    req?: LegalRequest,
   ) {
     const clients: Record<string, unknown>[] = await manager.query(
       'SELECT oauth_issuer AS "oauthIssuer",client_id AS "clientId",roles,enabled FROM external_identity_source_clients WHERE source_id=$1 ORDER BY oauth_issuer,client_id',
@@ -156,10 +164,11 @@ export class IntegrationRegistryService {
     );
     if (
       !consumerOrganizationsAllowed(
-        authorization,
+        req?.actor?.authorization,
         organizations.map((organization) =>
           String(organization.organizationId),
         ),
+        this.platformOperator(req),
       )
     )
       throw new ForbiddenException('Integration outside consumer scope');
@@ -192,8 +201,7 @@ export class IntegrationRegistryService {
         `SELECT a.id,a.name,a.issuer_id AS "issuerId",i.name AS "issuerName" FROM applications a JOIN issuers i ON i.id=a.issuer_id WHERE a.status='active' AND a.deleted_at IS NULL AND i.status='active' AND i.deleted_at IS NULL ORDER BY a.name,a.id`,
       ),
       this.db.query<{ id: string; name: string; applicationId: string }[]>(
-        `SELECT d.id,d.title AS name,d.application_id AS "applicationId" FROM documents d JOIN applications a ON a.id=d.application_id JOIN issuers i ON i.id=a.issuer_id WHERE d.status='active' AND d.deleted_at IS NULL AND a.status='active' AND a.deleted_at IS NULL AND i.status='active' AND i.deleted_at IS NULL AND d.document_type=ANY($1::text[]) AND ${acceptableDocumentSql} ORDER BY d.title,d.id`,
-        [publicDocumentTypes],
+        `SELECT d.id,d.title AS name,d.application_id AS "applicationId" FROM documents d JOIN applications a ON a.id=d.application_id JOIN issuers i ON i.id=a.issuer_id WHERE d.status='active' AND d.deleted_at IS NULL AND a.status='active' AND a.deleted_at IS NULL AND i.status='active' AND i.deleted_at IS NULL AND ${acceptableDocumentSql} ORDER BY d.title,d.id`,
       ),
       this.db.query<
         {
@@ -317,17 +325,15 @@ export class IntegrationRegistryService {
       if (catalog && enabled) {
         const ready: { id: string }[] = await m.query(
           `SELECT d.id FROM documents d WHERE d.id=ANY($1::uuid[])
-           AND d.document_type=ANY($2::text[]) AND ${acceptableDocumentSql}`,
-          [dto.documentIds, publicDocumentTypes],
+           AND ${acceptableDocumentSql}`,
+          [dto.documentIds],
         );
         if (ready.length !== dto.documentIds.length)
           throw new BadRequestException(
-            'Selecciona documentos públicos publicados con HTML vigente.',
+            'Selecciona documentos publicados con HTML vigente.',
           );
       }
-      const before = old
-        ? await this.project(old, m, req.actor.authorization)
-        : null;
+      const before = old ? await this.project(old, m, req) : null;
       let saved: ExternalSource;
       try {
         [saved] = old
@@ -349,7 +355,7 @@ export class IntegrationRegistryService {
       } catch (e) {
         if ((e as { code?: string }).code === '23505')
           throw new ConflictException(
-            'El sistema ya tiene una integración. Edita la existente.',
+            'El sistema ya tiene una integración. Edítala desde la lista; si no aparece, la administra la organización de plataforma.',
           );
         throw e;
       }
@@ -390,7 +396,7 @@ export class IntegrationRegistryService {
         product_code: settings.productCode,
         context_url: settings.contextUrl,
       });
-      const after = await this.project(saved, m, req.actor.authorization);
+      const after = await this.project(saved, m, req);
       await this.audit(
         m,
         req,

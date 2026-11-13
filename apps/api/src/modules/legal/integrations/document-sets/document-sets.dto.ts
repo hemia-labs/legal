@@ -87,3 +87,6 @@ export class DocumentSetLocaleDto {
 export class EvidenceHistoryDto extends EvaluateSetDto {
   @IsOptional() @IsUUID() cursor?: string;
 }
+export class AccountDocumentDto extends EvidenceHistoryDto {
+  @IsUUID() documentVersionId: string;
+}

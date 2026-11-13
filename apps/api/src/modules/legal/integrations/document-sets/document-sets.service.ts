@@ -1,3 +1,4 @@
+import { documentPolicy } from '../../constants/document-types';
 import {
   BadRequestException,
   ConflictException,
@@ -21,6 +22,7 @@ import type { LegalActor } from '../../../../common/types/legal-request';
 import { scopePredicate } from '../../authorization/legal-scope';
 import {
   AccountCatalogDto,
+  AccountDocumentDto,
   RecordEvidenceDto,
   SaveDocumentSetDto,
   EvaluateSetDto,
@@ -116,8 +118,12 @@ export class DocumentSetsService {
     actor: LegalActor,
     permission: string,
   ) {
-    // A consumer-organization assignment cannot edit an application-wide policy.
-    if (actor.authorization?.authenticatedOrganizationId)
+    // A consumer-organization assignment cannot edit an application-wide policy,
+    // unless the selected organization is a configured platform operator.
+    if (
+      actor.authorization?.authenticatedOrganizationId &&
+      !this.registry.platformOperatorFor(actor.authorization)
+    )
       throw new ForbiddenException(
         'Application-wide policy management required',
       );
@@ -212,13 +218,22 @@ export class DocumentSetsService {
         this.registry.contextUrl(service.url);
       }
       const ids = dto.documents.map((d) => d.documentId);
-      const docs: Array<{ id: string }> = await m.query(
-        `SELECT d.id FROM documents d JOIN external_identity_source_documents x ON x.document_id=d.id AND x.source_id=$2 WHERE d.id=ANY($1::uuid[]) AND d.application_id=$3 AND d.status='active' AND d.deleted_at IS NULL FOR SHARE OF d,x`,
+      const docs: Array<{ id: string; document_type: string }> = await m.query(
+        `SELECT d.id,d.document_type FROM documents d JOIN external_identity_source_documents x ON x.document_id=d.id AND x.source_id=$2 WHERE d.id=ANY($1::uuid[]) AND d.application_id=$3 AND d.status='active' AND d.deleted_at IS NULL FOR SHARE OF d,x`,
         [ids, dto.sourceId, applicationId],
       );
       if (docs.length !== ids.length)
         throw new BadRequestException(
           'Documents must belong to this application and integration',
+        );
+      if (
+        dto.usage !== 'account' &&
+        docs.some(
+          (doc) => documentPolicy(doc.document_type)?.workflow !== 'public',
+        )
+      )
+        throw new BadRequestException(
+          'Internal documents require an account set',
         );
       const [old]: SetRow[] = await m.query(
         'SELECT * FROM legal_document_sets WHERE application_id=$1 AND key=$2 FOR UPDATE',
@@ -339,16 +354,13 @@ export class DocumentSetsService {
       artifacts: Awaited<
         ReturnType<LegalService['getPublicDocument']>
       >['artifacts'];
+      contentHash: string;
     }> = [];
-    const availableItems =
-      set.configuration.usage === 'account'
-        ? items.filter((item) => versions.has(item.documentId))
-        : items;
     // Bound concurrent lookups for sets that contain many documents.
     const batchSize = 4;
-    for (let offset = 0; offset < availableItems.length; offset += batchSize) {
+    for (let offset = 0; offset < items.length; offset += batchSize) {
       const batch = await Promise.all(
-        availableItems.slice(offset, offset + batchSize).map(async (item) => {
+        items.slice(offset, offset + batchSize).map(async (item) => {
           const v = versions.get(item.documentId);
           if (!v)
             throw new NotFoundException(
@@ -380,6 +392,7 @@ export class DocumentSetsService {
               deadline: item.deadline ?? null,
             },
             artifacts: published.artifacts,
+            contentHash: published.contentHash,
           };
         }),
       );
@@ -388,9 +401,56 @@ export class DocumentSetsService {
     return publications;
   }
   private async documents(set: SetRow, locale: string): Promise<Doc[]> {
-    return (await this.publications(set, locale)).map(
-      ({ document }) => document,
+    if (set.configuration.usage !== 'account') {
+      return (await this.publications(set, locale)).map(
+        ({ document }) => document,
+      );
+    }
+    const rows: Array<{
+      document_id: string;
+      key: string;
+      title: string;
+      id: string;
+      version: string;
+      content_hash: string;
+    }> = await this.db.query(
+      `SELECT DISTINCT ON (d.id) d.id AS document_id,d.key,d.title,v.id,v.version,v.content_hash
+       FROM documents d JOIN document_versions v ON v.document_id=d.id
+       JOIN external_identity_source_documents x ON x.document_id=d.id AND x.source_id=$3
+       WHERE d.id=ANY($1::uuid[]) AND d.application_id=$2 AND d.locale=$4 AND d.status='active' AND d.deleted_at IS NULL
+         AND v.status='published' AND v.content_hash IS NOT NULL AND (v.effective_from IS NULL OR v.effective_from<=now()) AND (v.effective_until IS NULL OR v.effective_until>now())
+         AND EXISTS (
+           SELECT 1 FROM publications p JOIN publication_assets a ON a.publication_id=p.id AND a.kind='html'
+           WHERE p.document_version_id=v.id AND p.status='published' AND p.organization_id IS NULL AND a.sha256=v.content_hash
+         )
+       ORDER BY d.id,v.effective_from DESC NULLS LAST,v.created_at DESC`,
+      [
+        set.configuration.documents.map((item) => item.documentId),
+        set.application_id,
+        set.source_id,
+        locale,
+      ],
     );
+    const versions = new Map(rows.map((row) => [row.document_id, row]));
+    return set.configuration.documents.flatMap((item) => {
+      const version = versions.get(item.documentId);
+      return version
+        ? [
+            {
+              documentId: item.documentId,
+              documentVersionId: version.id,
+              documentKey: version.key,
+              title: version.title,
+              version: version.version,
+              contentHash: version.content_hash,
+              requiredAction: item.requiredAction,
+              blocking: item.blocking,
+              requireReacceptance: item.requireReacceptance,
+              deadline: item.deadline ?? null,
+            },
+          ]
+        : [];
+    });
   }
   async published(applicationId: string, key: string, locale: string) {
     const set = await this.set(applicationId, key);
@@ -450,6 +510,32 @@ export class DocumentSetsService {
       });
     }
     return { sets };
+  }
+  async accountDocument(caller: Caller, dto: AccountDocumentDto) {
+    if (caller.role !== 'collector') throw new ForbiddenException();
+    const set = await this.set(dto.applicationId, dto.documentSetKey);
+    if (set.configuration.usage !== 'account')
+      throw new NotFoundException('Account document set not found');
+    if (set.configuration.requiresOrganization && !dto.organizationId)
+      throw new ForbiddenException('Organization required');
+    await this.source(caller, set.source_id, dto.organizationId);
+    const current = await this.documents(set, dto.locale);
+    const document =
+      current.find((doc) => doc.documentVersionId === dto.documentVersionId) ??
+      (await this.history(caller, dto)).items
+        .flatMap((item) => item.documents)
+        .find((doc) => doc.documentVersionId === dto.documentVersionId);
+    if (!document)
+      throw new NotFoundException('Account document version not found');
+    const published = await this.legal.getAccountDocument(
+      set.application_id,
+      document.documentId,
+      document.documentVersionId,
+      dto.locale,
+    );
+    if (published.contentHash !== document.contentHash)
+      throw new ConflictException('Document content changed');
+    return published;
   }
   async preparePending(caller: Caller, dto: EvaluateSetDto) {
     if (caller.role !== 'collector') throw new ForbiddenException();
@@ -543,12 +629,21 @@ export class DocumentSetsService {
         publications?.find(
           ({ document }) => document.documentVersionId === d.documentVersionId,
         ) ??
-        (await this.legal.getPublicDocument(
-          applicationId,
-          d.documentKey,
-          locale,
-          d.version,
-        ));
+        (set.configuration.usage === 'account'
+          ? await this.legal.getAccountDocument(
+              applicationId,
+              d.documentId,
+              d.documentVersionId,
+              locale,
+            )
+          : await this.legal.getPublicDocument(
+              applicationId,
+              d.documentKey,
+              locale,
+              d.version,
+            ));
+      if (publication.contentHash !== d.contentHash)
+        throw new ConflictException('Document content changed');
       publicDocs.push({ ...d, artifacts: publication.artifacts });
     }
     return {

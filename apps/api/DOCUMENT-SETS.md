@@ -7,7 +7,7 @@ La creación de documentos no cambia: crear, cargar fuente, revisar y publicar. 
 ## Configuración
 
 1. Registrar en el catálogo de Sistemas `configuration.legalAcceptances.identityIssuer` (estable, por ejemplo `urn:hemia:producto`) y `productCode`, y clientes OAuth con funciones `collector` y/o `validator`.
-2. Vincular el sistema con la aplicación legal y la lista de documentos permitidos mediante la API existente de integraciones. Ya no se exige una regla de aceptación del motor anterior para habilitar esa vinculación: sí se exige publicación pública vigente con HTML desde el catálogo.
+2. Vincular el sistema con la aplicación legal y la lista de documentos permitidos mediante la API existente de integraciones. El catálogo exige una publicación vigente con HTML. Los documentos internos se usan en conjuntos autenticados de cuenta.
 3. Configurar los conjuntos en el detalle de la integración o mediante la API siguiente.
 
 ```http
@@ -48,6 +48,8 @@ Ejemplo de creación (sustituir identificadores):
 La respuesta contiene `key`, `applicationId` y `revision` (UUID). Una edición debe enviar `expectedRevision` igual a la revisión leída; un conflicto devuelve 409 `DOCUMENT_SET_CHANGED`. Cada actualización genera otra revisión. `effectiveFrom` determina desde cuándo puede consultarse la configuración guardada; no hay una cola de revisiones programadas: reemplazar una configuración con otra futura deja el conjunto sin consulta pública hasta esa fecha.
 
 Cada documento debe pertenecer a esa aplicación y estar permitido en la integración. Los documentos del conjunto deben estar publicados en el `locale` solicitado (sin sustitución silenciosa de idioma). La clave es arbitraria y no activa comportamiento específico de producto.
+
+Los conjuntos de cuenta admiten publicaciones internas con artefacto HTML. `POST /v1/legal/integrations/account-document` recibe el contexto de cuenta, `documentSetKey` y `documentVersionId`, con `cursor` opcional para consultar una página de historial. Verifica el cliente recolector, el alcance de la organización y que la versión pertenezca al catálogo vigente o al historial autorizado. Los conjuntos públicos conservan la restricción a tipos públicos.
 
 En el detalle de la integración, **Conjuntos de documentos** permite administrar la selección desde el catálogo de documentos vinculados. El conjunto público `registration` sigue reservado al alta. Los conjuntos con `usage: "account"` se descubren mediante `POST /v1/legal/integrations/account-catalog` con `applicationId`, `subjectId`, `organizationId` cuando corresponde y `locale`. La respuesta incluye la clave, el alcance de evidencia, el modo de verificación y los documentos vigentes de cada conjunto autorizado. Una publicación sin vigencia actual se omite en los conjuntos de cuenta. En esos conjuntos `informational` muestra el documento para lectura y queda excluido de pendientes y de la preparación de evidencia. `pending/prepare` devuelve hasta diez pendientes por revisión de cuenta. Los conjuntos de cuenta requieren acceso técnico autenticado y se consultan fuera del registro público.
 

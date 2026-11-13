@@ -809,11 +809,10 @@ describe('LegalService', () => {
       'es-MX',
     );
 
-    expect(response.artifacts).toEqual({
-      html: expect.objectContaining({
-        url: 'https://storage.test/document.html',
-        contentType: 'text/html',
-      }),
+    expect(Object.keys(response.artifacts)).toEqual(['html']);
+    expect(response.artifacts.html).toMatchObject({
+      url: 'https://storage.test/document.html',
+      contentType: 'text/html',
     });
     expect(storage.signedDownloadUrl).toHaveBeenCalledTimes(1);
     expect(response.version.version).toBe('1.0.0');
@@ -1308,7 +1307,8 @@ function matchesValue(value: unknown, condition: unknown): boolean {
   if (!(condition instanceof FindOperator)) return value === condition;
   // SQL authorization is exercised against PostgreSQL in consumer integration tests.
   if (condition.type === 'raw') return true;
-  if (condition.type === 'in') return condition.value.includes(value);
+  if (condition.type === 'in')
+    return (condition.value as unknown[]).includes(value);
   if (condition.type === 'or') {
     return (condition.value as FindOperator<unknown>[]).some((option) =>
       matchesValue(value, option),
