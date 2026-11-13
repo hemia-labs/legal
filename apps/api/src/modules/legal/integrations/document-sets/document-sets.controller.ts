@@ -21,6 +21,7 @@ import type { IntegrationRequest } from '../acceptance/integration-auth.guard';
 import { DocumentSetsService } from './document-sets.service';
 import {
   AccountCatalogDto,
+  AccountDocumentDto,
   DocumentSetLocaleDto,
   EvaluateSetDto,
   EvidenceHistoryDto,
@@ -81,6 +82,15 @@ export class EvidenceController {
     @Req() req: IntegrationRequest,
   ) {
     return this.service.accountCatalog(req.integrationCaller, dto);
+  }
+  @Post('account-document')
+  @Permissions('legal.integration.acceptances.prepare')
+  @Header('Cache-Control', 'no-store')
+  accountDocument(
+    @Body(validation) dto: AccountDocumentDto,
+    @Req() req: IntegrationRequest,
+  ) {
+    return this.service.accountDocument(req.integrationCaller, dto);
   }
   @Post('evidence')
   @Permissions('legal.integration.acceptances.create')

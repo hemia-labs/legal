@@ -58,8 +58,10 @@ let app;
  CREATE TABLE external_identity_source_clients(id uuid PRIMARY KEY,source_id uuid REFERENCES external_identity_sources(id),oauth_issuer text,client_id text,roles text[],enabled boolean DEFAULT true,UNIQUE(id,source_id));
  CREATE TABLE external_identity_source_documents(source_id uuid REFERENCES external_identity_sources(id),document_id uuid);
  CREATE TABLE external_identity_source_organizations(source_id uuid,organization_id uuid,enabled boolean);
- CREATE TABLE documents(id uuid PRIMARY KEY,application_id uuid REFERENCES applications(id),key text,title text,locale text,status text DEFAULT 'active',deleted_at timestamptz);
+ CREATE TABLE documents(id uuid PRIMARY KEY,application_id uuid REFERENCES applications(id),key text,title text,locale text,document_type text DEFAULT 'terms_and_conditions',status text DEFAULT 'active',deleted_at timestamptz);
  CREATE TABLE document_versions(id uuid PRIMARY KEY,document_id uuid REFERENCES documents(id),version text,status text DEFAULT 'published',content_hash text,effective_from timestamptz,effective_until timestamptz,created_at timestamptz DEFAULT now());
+ CREATE TABLE publications(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),document_version_id uuid REFERENCES document_versions(id),status text DEFAULT 'published',organization_id text);
+ CREATE TABLE publication_assets(publication_id uuid REFERENCES publications(id),kind text,sha256 text);
  CREATE TABLE audit_events(id uuid DEFAULT gen_random_uuid(),issuer_id uuid,application_id uuid,trace_id text,actor_identity_issuer text,actor_subject_id text,actor_type text,action text,entity_type text,entity_id uuid,metadata jsonb);`);
     await migration.up(db.createQueryRunner());
     const ids = Array.from({ length: 9 }, () => randomUUID()),
@@ -122,6 +124,19 @@ let app;
       [version, document, 'a'.repeat(64)],
     );
     const legal = {
+      getAccountDocument: async (appId, id, versionId, locale) => {
+        const [r] = await db.query(
+          'SELECT v.*,d.title FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE d.application_id=$1 AND d.id=$2 AND v.id=$3 AND d.locale=$4',
+          [appId, id, versionId, locale],
+        );
+        assert.ok(r);
+        return {
+          document: { id, title: r.title },
+          version: { id: r.id },
+          contentHash: r.content_hash,
+          artifacts: { html: { url: 'https://storage.example/document.html' } },
+        };
+      },
       getPublicDocument: async (appId, key, locale, v) => {
         const [r] = await db.query(
           'SELECT v.*,d.title,d.id docid FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE d.application_id=$1 AND d.key=$2 AND d.locale=$3 AND v.version=$4',
@@ -798,6 +813,19 @@ let app;
         },
       ],
     };
+    await db.query(
+      "UPDATE documents SET document_type='saas_agreement' WHERE id=$1",
+      [privacyDocument],
+    );
+    await db.query(
+      "WITH p AS (INSERT INTO publications(document_version_id) VALUES ($1) RETURNING id) INSERT INTO publication_assets SELECT id,'html',$2 FROM p",
+      [privacyVersion, 'c'.repeat(64)],
+    );
+    assert.equal((await http('PUT', setPath.replace(/registration$/, 'invalid_public'), {
+      ...policy,
+      usage: undefined,
+      documents: [{ ...policy.documents[0], requiredAction: 'accept' }],
+    })).status, 400);
     assert.equal(
       (
         await http('PUT', catalogSetPath, {
@@ -817,6 +845,15 @@ let app;
       [['account_policies', 'informational']],
     );
     const policyQuery = { ...catalogQuery, documentSetKey: 'account_policies' };
+    const accountDocumentPath = '/v1/legal/integrations/account-document';
+    const internalDocument = await http('POST', accountDocumentPath, {
+      ...policyQuery, documentVersionId: privacyVersion,
+    });
+    assert.equal(internalDocument.status, 201, JSON.stringify(internalDocument));
+    assert.equal(internalDocument.body.version.id, privacyVersion);
+    assert.equal((await http('POST', accountDocumentPath, {
+      ...policyQuery, documentVersionId: randomUUID(),
+    })).status, 404);
     assert.deepEqual(
       (await http('POST', pendingPath, policyQuery)).body.pendingDocuments,
       [],

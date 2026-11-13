@@ -167,7 +167,9 @@ function IntegrationScreen() {
               </TableHeader>
               <TableBody>
                 {!filteredRows.length && <TableRow className="even:bg-transparent hover:bg-transparent"><TableCell colSpan={6} className="h-24 px-5 py-2 text-center text-muted-foreground">
-                  {rows.length ? "No hay aceptaciones externas que coincidan con la búsqueda o los filtros." : "No hay aceptaciones externas configuradas en tu alcance."}
+                  {rows.length
+                    ? "No hay aceptaciones externas que coincidan con la búsqueda o los filtros."
+                    : "No hay integraciones visibles para esta sesión. Las integraciones compartidas se administran con acceso al emisor o a la aplicación."}
                 </TableCell></TableRow>}
                 {filteredRows.map((row) => (
                   <TableRow key={row.id} className="h-12 even:bg-transparent hover:bg-muted/30">

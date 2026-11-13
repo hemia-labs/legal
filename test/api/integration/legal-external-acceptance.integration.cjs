@@ -85,7 +85,6 @@ async function main(){
   ["UPDATE document_versions SET effective_from=now()+interval '1 day' WHERE id=$1","UPDATE document_versions SET effective_from=NULL WHERE id=$1"],
   ["UPDATE publications SET status='failed' WHERE document_version_id=$1","UPDATE publications SET status='published' WHERE document_version_id=$1"],
   ["UPDATE publication_assets SET kind='source' WHERE publication_id IN (SELECT id FROM publications WHERE document_version_id=$1)","UPDATE publication_assets SET kind='html' WHERE publication_id IN (SELECT id FROM publications WHERE document_version_id=$1)"],
-  ["UPDATE documents SET document_type='nda' WHERE id IN (SELECT document_id FROM document_versions WHERE id=$1)","UPDATE documents SET document_type='terms_and_conditions' WHERE id IN (SELECT document_id FROM document_versions WHERE id=$1)"],
  ]){
   await db.query(change,[versions[0]]);
   assert.equal((await registry.catalogOptions(catalogRequest)).documents.some(d=>d.id===docs[0]),false);
@@ -93,6 +92,10 @@ async function main(){
   assert.deepEqual(await db.query('SELECT document_id FROM external_identity_source_documents WHERE source_id=$1 ORDER BY position',[source.id]),originalLinks);
   await db.query(restore,[versions[0]]);
  }
+ await db.query("UPDATE documents SET document_type='saas_agreement' WHERE id=$1",[docs[0]]);
+ assert.equal((await registry.catalogOptions(catalogRequest)).documents.some(d=>d.id===docs[0]),true);
+ assert.equal((await registry.saveFromCatalog(catalogRequest,{systemId,applicationId:app,documentIds:docs})).id,source.id);
+ await db.query("UPDATE documents SET document_type='terms_and_conditions' WHERE id=$1",[docs[0]]);
  const context={resolve:async()=>['owner']};
  const published={getPublicDocument:async(application,key,locale,version)=>{const n=Number(key.slice(3));return {version:{id:versions[n]},contentHash:'a'.repeat(64),artifacts:{html:{url:'https://legal.test/doc'}}};}};
  const svc=new ExternalAcceptanceService(db,registry,context,published,new LegalAcceptanceValidationService(config,db));
