@@ -1,5 +1,11 @@
 # api
 
+## 0.6.2
+
+### Patch Changes
+
+- 9eb89a2: Let platform operator organizations (`LEGAL_PLATFORM_ORGANIZATION_IDS`) manage Console-created integrations and application document sets in authenticated mode without exposing them to other organizations.
+
 ## 0.6.1
 
 ### Patch Changes
