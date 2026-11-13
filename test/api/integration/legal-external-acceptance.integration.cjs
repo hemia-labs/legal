@@ -166,6 +166,34 @@ async function main(){
  assert.equal(registrationSource.contextUrl,undefined);
  assert.equal((await registry.catalogOptions(catalogRequest)).documents.length,3);
  assert.ok((await systems.options({actor})).some(s=>s.id===registration.id));
+ // Authenticated mode: a Console-created (all-organization) integration is managed only by platform organizations.
+ const platformOrganization=randomUUID(),foreignOrganization=randomUUID();
+ const human=(organizationId)=>({actor:{identityIssuer:'http://localhost:4000',subjectId:randomUUID(),actorType:'user',traceId:randomUUID(),permissions:[],authorization:{assignments:[],expiresAt:Math.floor(Date.now()/1000)+300,authenticatedOrganizationId:organizationId}}});
+ const platformHuman=human(platformOrganization),foreignHuman=human(foreignOrganization);
+ assert.equal((await db.query('SELECT count(*)::int n FROM external_identity_source_organizations WHERE source_id=$1',[registrationSource.id]))[0].n,0);
+ // Reproduces production before the fix: nobody can see the all-organization integration.
+ assert.equal((await registry.list(platformHuman)).some(s=>s.id===registrationSource.id),false);
+ const platformRegistry=new IntegrationRegistryService(db,new ConfigService({sso:{issuer:'http://localhost:4000'},legalIntegrations:{production:false},authorization:{mode:'authenticated',platformOrganizationIds:[platformOrganization]}}),systems);
+ const platformList=await platformRegistry.list(platformHuman);
+ const platformView=platformList.find(s=>s.id===registrationSource.id);
+ assert.ok(platformView,'platform operator lists the all-organization integration');
+ assert.deepEqual(platformView.organizations,[]);
+ assert.deepEqual(platformView.documentIds,docs);
+ const edited=await platformRegistry.save(platformHuman,{systemId:registration.id,applicationId:app,documentIds:[docs[1],docs[0]]},registrationSource.id);
+ assert.equal(edited.id,registrationSource.id);assert.deepEqual(edited.documentIds,[docs[1],docs[0]]);
+ // Editing keeps the integration global: no organization restriction is added.
+ assert.equal((await db.query('SELECT count(*)::int n FROM external_identity_source_organizations WHERE source_id=$1',[registrationSource.id]))[0].n,0);
+ assert.equal((await platformRegistry.list(foreignHuman)).some(s=>s.id===registrationSource.id),false);
+ await assert.rejects(platformRegistry.save(foreignHuman,{systemId:registration.id,applicationId:app,documentIds:docs},registrationSource.id),e=>e.status===403);
+ await assert.rejects(platformRegistry.disable(foreignHuman,registrationSource.id),e=>e.status===403);
+ await assert.rejects(platformRegistry.save(foreignHuman,{systemId:registration.id,applicationId:app,documentIds:docs}),e=>e.status===409&&/plataforma/.test(e.message));
+ // Integrations restricted to another organization stay outside the platform operator.
+ await db.query('INSERT INTO external_identity_source_organizations(source_id,organization_id,enabled) VALUES($1,$2,true)',[created.id,foreignOrganization]);
+ assert.equal((await platformRegistry.list(platformHuman)).some(s=>s.id===created.id),false);
+ assert.ok((await platformRegistry.list(foreignHuman)).some(s=>s.id===created.id));
+ await assert.rejects(platformRegistry.save(platformHuman,{systemId:second.id,applicationId:app,documentIds:docs},created.id),e=>e.status===403);
+ await platformRegistry.save(platformHuman,{systemId:registration.id,applicationId:app,documentIds:docs},registrationSource.id);
+ console.log('PASS authenticated platform operator lists, opens and edits the all-organization integration; foreign and organization-restricted scopes stay isolated');
  console.log('PASS PostgreSQL catalog backfill, stable historical clients, forward-only rollback protection, system disablement, concurrent preparation and acceptance, lost response, payload conflict, source/user/org/client isolation, expiry, changed documents, v2 evidence, per-system service resolution and disabled service rejection');
  }finally{await db.destroy();}
 }
