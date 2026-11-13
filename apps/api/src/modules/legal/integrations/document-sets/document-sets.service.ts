@@ -20,6 +20,7 @@ import type { IntegrationRequest } from '../acceptance/integration-auth.guard';
 import type { LegalActor } from '../../../../common/types/legal-request';
 import { scopePredicate } from '../../authorization/legal-scope';
 import {
+  AccountCatalogDto,
   RecordEvidenceDto,
   SaveDocumentSetDto,
   EvaluateSetDto,
@@ -63,6 +64,12 @@ type Doc = {
   requireReacceptance: boolean;
   deadline: string | null;
 };
+type PendingReviewOwner = {
+  clientId: string;
+  subjectId: string;
+  organizationId: string | null;
+  sessionId: string | null;
+};
 type Snapshot = {
   id: string;
   set_id: string;
@@ -71,7 +78,9 @@ type Snapshot = {
   set_key: string;
   set_revision: string;
   locale: string;
-  configuration: SaveDocumentSetDto;
+  configuration: SaveDocumentSetDto & {
+    pendingReviewOwner?: PendingReviewOwner;
+  };
   documents: Doc[];
   created_at: Date;
   expires_at: Date;
@@ -151,8 +160,37 @@ export class DocumentSetsService {
     if (!/^[a-z][a-z0-9_-]{1,79}$/.test(key))
       throw new BadRequestException('Invalid document set key');
     await this.admin(applicationId, actor, 'legal.documents.edit');
+    if (
+      key === 'registration' &&
+      (dto.usage || dto.evidenceScope === 'organization')
+    )
+      throw new BadRequestException(
+        'Registration requires an individual public set',
+      );
+    if (
+      dto.documents.some(
+        (doc) =>
+          doc.requiredAction === 'informational' &&
+          (dto.usage !== 'account' ||
+            doc.blocking ||
+            doc.requireReacceptance ||
+            doc.deadline),
+      )
+    ) {
+      throw new BadRequestException(
+        'Informational documents require an account set without acceptance rules',
+      );
+    }
     if (dto.requiresMfa && dto.verification !== 'verified_session')
       throw new BadRequestException('MFA requires a verified session policy');
+    if (
+      dto.evidenceScope === 'organization' &&
+      (!dto.requiresOrganization || dto.verification !== 'verified_session')
+    ) {
+      throw new BadRequestException(
+        'Organization evidence requires an organization and a verified session',
+      );
+    }
     const result = await this.db.transaction(async (m) => {
       // The application lock serializes first creation as well as optimistic updates.
       await m.query('SELECT id FROM applications WHERE id=$1 FOR UPDATE', [
@@ -191,6 +229,15 @@ export class DocumentSetsService {
         (!old && dto.expectedRevision)
       )
         throw new ConflictException('DOCUMENT_SET_CHANGED');
+      if (
+        old &&
+        (old.configuration.evidenceScope ?? 'individual') !==
+          (dto.evidenceScope ?? 'individual')
+      ) {
+        throw new ConflictException(
+          'Use a new document set to change evidence scope',
+        );
+      }
       const configuration = { ...dto };
       delete configuration.expectedRevision;
       const [saved]: SetRow[] = await m.query(
@@ -293,11 +340,15 @@ export class DocumentSetsService {
         ReturnType<LegalService['getPublicDocument']>
       >['artifacts'];
     }> = [];
+    const availableItems =
+      set.configuration.usage === 'account'
+        ? items.filter((item) => versions.has(item.documentId))
+        : items;
     // Bound concurrent lookups for sets that contain many documents.
     const batchSize = 4;
-    for (let offset = 0; offset < items.length; offset += batchSize) {
+    for (let offset = 0; offset < availableItems.length; offset += batchSize) {
       const batch = await Promise.all(
-        items.slice(offset, offset + batchSize).map(async (item) => {
+        availableItems.slice(offset, offset + batchSize).map(async (item) => {
           const v = versions.get(item.documentId);
           if (!v)
             throw new NotFoundException(
@@ -336,11 +387,105 @@ export class DocumentSetsService {
     }
     return publications;
   }
+  private async documents(set: SetRow, locale: string): Promise<Doc[]> {
+    return (await this.publications(set, locale)).map(
+      ({ document }) => document,
+    );
+  }
   async published(applicationId: string, key: string, locale: string) {
     const set = await this.set(applicationId, key);
+    if (
+      set.configuration.evidenceScope === 'organization' ||
+      set.configuration.usage === 'account'
+    )
+      throw new NotFoundException('Public document set not found');
     const publications = await this.publications(set, locale);
-    const documents = publications.map(({ document }) => document);
-    const fingerprint = hash({ revision: set.revision, locale, documents });
+    return this.prepareSnapshot(
+      set,
+      locale,
+      publications.map(({ document }) => document),
+      undefined,
+      publications,
+    );
+  }
+  async accountCatalog(caller: Caller, dto: AccountCatalogDto) {
+    if (caller.role !== 'collector') throw new ForbiddenException();
+    const rows: Array<{ key: string }> = await this.db.query(
+      `SELECT key FROM legal_document_sets WHERE application_id=$1 AND enabled AND effective_from<=now() AND configuration->>'usage'='account' ORDER BY key`,
+      [dto.applicationId],
+    );
+    const sets: Array<{
+      documentSetKey: string;
+      name: string;
+      revision: string;
+      evidenceScope: NonNullable<SaveDocumentSetDto['evidenceScope']>;
+      verification: SaveDocumentSetDto['verification'];
+      documents: Doc[];
+    }> = [];
+    for (const { key } of rows) {
+      let set: SetRow;
+      try {
+        set = await this.set(dto.applicationId, key);
+        await this.source(caller, set.source_id, dto.organizationId);
+      } catch (error) {
+        if (
+          error instanceof ForbiddenException ||
+          error instanceof NotFoundException
+        )
+          continue;
+        throw error;
+      }
+      if (
+        set.configuration.usage !== 'account' ||
+        (set.configuration.requiresOrganization && !dto.organizationId)
+      )
+        continue;
+      sets.push({
+        documentSetKey: key,
+        name: set.name,
+        revision: set.revision,
+        evidenceScope: set.configuration.evidenceScope ?? 'individual',
+        verification: set.configuration.verification,
+        documents: await this.documents(set, dto.locale),
+      });
+    }
+    return { sets };
+  }
+  async preparePending(caller: Caller, dto: EvaluateSetDto) {
+    if (caller.role !== 'collector') throw new ForbiddenException();
+    const set = await this.set(dto.applicationId, dto.documentSetKey);
+    const source = await this.source(caller, set.source_id, dto.organizationId);
+    if (set.configuration.evidenceScope === 'organization' && !dto.sessionId)
+      throw new ForbiddenException('Verified session required by document set');
+    const pending = await this.evaluatePending(set, source, dto);
+    const documents =
+      set.configuration.usage === 'account'
+        ? pending.documents.slice(0, 10)
+        : pending.documents;
+    if (!documents.length) {
+      return { documentSetKey: set.key, revision: set.revision, documents: [] };
+    }
+    return this.prepareSnapshot(set, dto.locale, documents, {
+      clientId: source.client_record_id,
+      subjectId: dto.subjectId,
+      organizationId: dto.organizationId ?? null,
+      sessionId: dto.sessionId ?? null,
+    });
+  }
+  private async prepareSnapshot(
+    set: SetRow,
+    locale: string,
+    documents: Doc[],
+    pendingReviewOwner?: PendingReviewOwner,
+    publications?: Awaited<ReturnType<DocumentSetsService['publications']>>,
+  ) {
+    const { application_id: applicationId, key } = set;
+    const fingerprint = hash({
+      revision: set.revision,
+      locale,
+      documents,
+      pendingReviewOwner,
+    });
     const findSnapshot = async (db: DataSource | EntityManager) => {
       const [snapshot]: Snapshot[] = await db.query(
         'SELECT * FROM legal_document_set_snapshots WHERE set_id=$1 AND fingerprint=$2 AND expires_at>now() ORDER BY created_at DESC LIMIT 1',
@@ -379,12 +524,32 @@ export class DocumentSetsService {
             set.revision,
             locale,
             fingerprint,
-            JSON.stringify(set.configuration),
+            JSON.stringify({ ...set.configuration, pendingReviewOwner }),
             JSON.stringify(documents),
           ],
         );
         return created;
       });
+    }
+    const publicDocs: Array<
+      Doc & {
+        artifacts: Awaited<
+          ReturnType<LegalService['getPublicDocument']>
+        >['artifacts'];
+      }
+    > = [];
+    for (const d of snapshot.documents) {
+      const publication =
+        publications?.find(
+          ({ document }) => document.documentVersionId === d.documentVersionId,
+        ) ??
+        (await this.legal.getPublicDocument(
+          applicationId,
+          d.documentKey,
+          locale,
+          d.version,
+        ));
+      publicDocs.push({ ...d, artifacts: publication.artifacts });
     }
     return {
       applicationId,
@@ -392,10 +557,7 @@ export class DocumentSetsService {
       revision: set.revision,
       snapshotToken: snapshot.id,
       expiresAt: snapshot.expires_at.toISOString(),
-      documents: publications.map(({ document, artifacts }) => ({
-        ...document,
-        artifacts,
-      })),
+      documents: publicDocs,
     };
   }
   private async assurance(
@@ -476,6 +638,18 @@ export class DocumentSetsService {
       snapshot.source_id,
       dto.organizationId,
     );
+    const owner = snapshot.configuration.pendingReviewOwner;
+    if (snapshot.configuration.evidenceScope === 'organization' && !owner)
+      throw new ForbiddenException('Organization review context required');
+    if (
+      owner &&
+      (owner.clientId !== source.client_record_id ||
+        owner.subjectId !== dto.subjectId ||
+        owner.organizationId !== (dto.organizationId ?? null) ||
+        owner.sessionId !== (dto.sessionId ?? null))
+    ) {
+      throw new ForbiddenException('Snapshot outside review context');
+    }
     // Canonical fields make a replay independent of JSON property order.
     const confirmations = dto.confirmations
       .map((c) => ({
@@ -595,13 +769,41 @@ export class DocumentSetsService {
   async pending(caller: Caller, dto: EvaluateSetDto, evidenceId?: string) {
     const set = await this.set(dto.applicationId, dto.documentSetKey);
     const source = await this.source(caller, set.source_id, dto.organizationId);
+    const { documents, acceptedDocumentIds } = await this.evaluatePending(
+      set,
+      source,
+      dto,
+      evidenceId,
+    );
+    return {
+      documentSetKey: set.key,
+      revision: set.revision,
+      pendingDocuments: documents.map((doc) => ({
+        ...doc,
+        reason: acceptedDocumentIds.has(doc.documentId)
+          ? 'new_version'
+          : 'new_document',
+      })),
+      allowed: !documents.some(
+        (d) =>
+          d.blocking && (!d.deadline || new Date(d.deadline) <= new Date()),
+      ),
+    };
+  }
+  private async evaluatePending(
+    set: SetRow,
+    source: Source,
+    dto: EvaluateSetDto,
+    evidenceId?: string,
+  ) {
     if (set.configuration.requiresOrganization && !dto.organizationId)
       throw new ForbiddenException('Organization required');
-    const publications = await this.publications(set, dto.locale);
-    const docs = publications.map(({ document }) => document);
+    const docs = (await this.documents(set, dto.locale)).filter(
+      (doc) => doc.requiredAction !== 'informational',
+    );
     const rows: Array<{ documents: Doc[]; assurance: Receipt['assurance'] }> =
       await this.db.query(
-        `SELECT s.documents,r.assurance FROM legal_evidence_receipts r JOIN legal_document_set_snapshots s ON s.id=r.snapshot_id WHERE r.source_id=$1 AND r.subject_id=$2 AND r.organization_id IS NOT DISTINCT FROM $3 AND s.set_id=$4 AND s.locale=$5 AND ($6::uuid IS NULL OR r.id=$6)`,
+        `SELECT s.documents,r.assurance FROM legal_evidence_receipts r JOIN legal_document_set_snapshots s ON s.id=r.snapshot_id WHERE r.source_id=$1 AND (r.subject_id=$2 OR $7::boolean) AND r.organization_id IS NOT DISTINCT FROM $3 AND s.set_id=$4 AND s.locale=$5 AND ($6::uuid IS NULL OR r.id=$6)`,
         [
           source.id,
           dto.subjectId,
@@ -609,6 +811,7 @@ export class DocumentSetsService {
           set.id,
           dto.locale,
           evidenceId ?? null,
+          set.configuration.evidenceScope === 'organization',
         ],
       );
     const accepted = rows
@@ -619,8 +822,9 @@ export class DocumentSetsService {
           (!set.configuration.requiresMfa || r.assurance.mfaVerified),
       )
       .flatMap((r) => r.documents);
-    const pendingDocuments = docs
-      .filter(
+    return {
+      acceptedDocumentIds: new Set(accepted.map((a) => a.documentId)),
+      documents: docs.filter(
         (d) =>
           !accepted.some(
             (a) =>
@@ -630,49 +834,41 @@ export class DocumentSetsService {
                 (a.documentVersionId === d.documentVersionId &&
                   a.contentHash === d.contentHash)),
           ),
-      )
-      .map((d) => ({
-        ...d,
-        reason: accepted.some((a) => a.documentId === d.documentId)
-          ? 'new_version'
-          : 'new_document',
-      }));
-    return {
-      documentSetKey: set.key,
-      revision: set.revision,
-      pendingDocuments,
-      allowed: !pendingDocuments.some(
-        (d) =>
-          d.blocking && (!d.deadline || new Date(d.deadline) <= new Date()),
       ),
     };
   }
   async history(caller: Caller, dto: EvidenceHistoryDto) {
     const set = await this.set(dto.applicationId, dto.documentSetKey);
     const source = await this.source(caller, set.source_id, dto.organizationId);
+    const organizationScope =
+      set.configuration.evidenceScope === 'organization';
+    if (organizationScope && !dto.organizationId)
+      throw new ForbiddenException('Organization required');
     const parameters = [
       source.id,
       dto.subjectId,
       dto.organizationId ?? null,
       set.id,
       dto.locale,
+      organizationScope,
     ];
     let cursor: Receipt | undefined;
     if (dto.cursor) {
       [cursor] = await this.db.query(
-        `SELECT r.* FROM legal_evidence_receipts r JOIN legal_document_set_snapshots s ON s.id=r.snapshot_id WHERE r.source_id=$1 AND r.subject_id=$2 AND r.organization_id IS NOT DISTINCT FROM $3 AND s.set_id=$4 AND s.locale=$5 AND r.id=$6`,
+        `SELECT r.* FROM legal_evidence_receipts r JOIN legal_document_set_snapshots s ON s.id=r.snapshot_id WHERE r.source_id=$1 AND (r.subject_id=$2 OR $6::boolean) AND r.organization_id IS NOT DISTINCT FROM $3 AND s.set_id=$4 AND s.locale=$5 AND r.id=$7`,
         [...parameters, dto.cursor],
       );
       if (!cursor) throw new BadRequestException('Invalid evidence cursor');
     }
     const rows: Array<Receipt & { documents: Doc[]; confirmations: unknown }> =
       await this.db.query(
-        `SELECT r.*,s.documents FROM legal_evidence_receipts r JOIN legal_document_set_snapshots s ON s.id=r.snapshot_id WHERE r.source_id=$1 AND r.subject_id=$2 AND r.organization_id IS NOT DISTINCT FROM $3 AND s.set_id=$4 AND s.locale=$5 AND ($6::timestamptz IS NULL OR (r.received_at,r.id)<($6::timestamptz,$7::uuid)) ORDER BY r.received_at DESC,r.id DESC LIMIT 101`,
+        `SELECT r.*,s.documents FROM legal_evidence_receipts r JOIN legal_document_set_snapshots s ON s.id=r.snapshot_id WHERE r.source_id=$1 AND (r.subject_id=$2 OR $6::boolean) AND r.organization_id IS NOT DISTINCT FROM $3 AND s.set_id=$4 AND s.locale=$5 AND ($7::timestamptz IS NULL OR (r.received_at,r.id)<($7::timestamptz,$8::uuid)) ORDER BY r.received_at DESC,r.id DESC LIMIT 101`,
         [...parameters, cursor?.received_at ?? null, cursor?.id ?? null],
       );
     return {
       items: rows.slice(0, 100).map((r) => ({
         ...this.receipt(r),
+        ...(organizationScope ? { signerSubjectId: r.subject_id } : {}),
         documents: r.documents,
         confirmations: r.confirmations,
       })),

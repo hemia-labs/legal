@@ -8,7 +8,7 @@ La creación de documentos no cambia: crear, cargar fuente, revisar y publicar. 
 
 1. Registrar en el catálogo de Sistemas `configuration.legalAcceptances.identityIssuer` (estable, por ejemplo `urn:hemia:producto`) y `productCode`, y clientes OAuth con funciones `collector` y/o `validator`.
 2. Vincular el sistema con la aplicación legal y la lista de documentos permitidos mediante la API existente de integraciones. Ya no se exige una regla de aceptación del motor anterior para habilitar esa vinculación: sí se exige publicación pública vigente con HTML desde el catálogo.
-3. Configurar los conjuntos por la API siguiente. No hay pantalla nueva de administración en esta entrega.
+3. Configurar los conjuntos en el detalle de la integración o mediante la API siguiente.
 
 ```http
 GET /v1/legal/applications/{applicationId}/document-sets
@@ -48,6 +48,10 @@ Ejemplo de creación (sustituir identificadores):
 La respuesta contiene `key`, `applicationId` y `revision` (UUID). Una edición debe enviar `expectedRevision` igual a la revisión leída; un conflicto devuelve 409 `DOCUMENT_SET_CHANGED`. Cada actualización genera otra revisión. `effectiveFrom` determina desde cuándo puede consultarse la configuración guardada; no hay una cola de revisiones programadas: reemplazar una configuración con otra futura deja el conjunto sin consulta pública hasta esa fecha.
 
 Cada documento debe pertenecer a esa aplicación y estar permitido en la integración. Los documentos del conjunto deben estar publicados en el `locale` solicitado (sin sustitución silenciosa de idioma). La clave es arbitraria y no activa comportamiento específico de producto.
+
+En el detalle de la integración, **Conjuntos de documentos** permite administrar la selección desde el catálogo de documentos vinculados. El conjunto público `registration` sigue reservado al alta. Los conjuntos con `usage: "account"` se descubren mediante `POST /v1/legal/integrations/account-catalog` con `applicationId`, `subjectId`, `organizationId` cuando corresponde y `locale`. La respuesta incluye la clave, el alcance de evidencia, el modo de verificación y los documentos vigentes de cada conjunto autorizado. Una publicación sin vigencia actual se omite en los conjuntos de cuenta. En esos conjuntos `informational` muestra el documento para lectura y queda excluido de pendientes y de la preparación de evidencia. `pending/prepare` devuelve hasta diez pendientes por revisión de cuenta. Los conjuntos de cuenta requieren acceso técnico autenticado y se consultan fuera del registro público.
+
+`evidenceScope` admite `individual` (predeterminado) u `organization`. El alcance se fija al crear el conjunto. Un conjunto de organización exige `requiresOrganization: true` y `verification: verified_session`. Su revisión se prepara mediante `pending/prepare` con `sessionId` y el producto debe verificar en su callback que la persona puede firmar por esa organización. El snapshot del conjunto para registro público queda reservado al alcance individual. En pendientes e historial, la evidencia de organización cubre a los miembros del mismo consultorio y el historial devuelve `signerSubjectId`. El consumidor debe autenticar al miembro y derivar su organización de su contexto confiable antes de consultar. La validación de un comprobante por firmante en `evidence/validate` conserva su contrato actual.
 
 `requiredAction` permite `accept`, `acknowledge` o `consent`. Todas las acciones configuradas deben confirmarse para registrar ese conjunto completo. No mezclar consentimientos opcionales con requisitos obligatorios de registro; usar otro conjunto para una elección separada. La selección de acciones y documentos es una decisión de la política del producto.
 
@@ -142,7 +146,9 @@ POST /v1/legal/integrations/evidence/history
 }
 ```
 
-Añadir `organizationId` si corresponde. Pendientes devuelve `documentSetKey`, `revision`, `pendingDocuments` con versión/hash/acción/reglas y `reason` (`new_document` o `new_version`), y `allowed` según bloqueos/plazos. Para presentar y registrar la actualización, obtener otro snapshot del conjunto público, mostrar sus documentos y confirmar el conjunto completo. Publicar no obliga a todos automáticamente: solo los conjuntos que referencian ese documento y exigen nueva aceptación producen ese pendiente.
+Añadir `organizationId` si corresponde. Pendientes devuelve `documentSetKey`, `revision`, `pendingDocuments` con versión/hash/acción/reglas y `reason` (`new_document` o `new_version`), y `allowed` según bloqueos/plazos. Publicar no obliga a todos automáticamente: solo los conjuntos que referencian ese documento y exigen nueva aceptación producen ese pendiente.
+
+Para una cuenta autenticada que revisa actualizaciones, el collector puede enviar la misma consulta a `POST /v1/legal/integrations/pending/prepare`. La respuesta contiene un snapshot con los documentos pendientes y sus artefactos, o `documents: []` sin snapshot cuando no hay pendientes. El snapshot está ligado al collector, sujeto, organización y sesión cuando se proporciona. Enviar a `POST /v1/legal/integrations/evidence` exactamente las confirmaciones de ese snapshot. Los comprobantes previos siguen cubriendo sus documentos según la política vigente. El registro inicial sigue usando el snapshot público completo. Si una operación requiere validar un comprobante único del conjunto completo, debe seguir usando el snapshot completo.
 
 Historial devuelve `items` (comprobante, documentos exactos y confirmaciones) y `nextCursor`; pasar `cursor` para la siguiente página (hasta 100). Está aislado por integración, conjunto, usuario, organización e idioma. Los comprobantes genéricos viven en `legal_evidence_receipts`, separados del registro anterior `acceptances`; se consultan por esta API, no por la pantalla ni exportador anteriores. Los eventos de auditoría se conservan en `audit_events`, pero el listado humano anterior no expone estos nuevos tipos.
 

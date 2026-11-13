@@ -20,6 +20,7 @@ import { IntegrationAuthGuard } from '../acceptance/integration-auth.guard';
 import type { IntegrationRequest } from '../acceptance/integration-auth.guard';
 import { DocumentSetsService } from './document-sets.service';
 import {
+  AccountCatalogDto,
   DocumentSetLocaleDto,
   EvaluateSetDto,
   EvidenceHistoryDto,
@@ -72,6 +73,15 @@ export class DocumentSetsController {
 @UseGuards(IntegrationAuthGuard)
 export class EvidenceController {
   constructor(private readonly service: DocumentSetsService) {}
+  @Post('account-catalog')
+  @Permissions('legal.integration.acceptances.prepare')
+  @Header('Cache-Control', 'no-store')
+  accountCatalog(
+    @Body(validation) dto: AccountCatalogDto,
+    @Req() req: IntegrationRequest,
+  ) {
+    return this.service.accountCatalog(req.integrationCaller, dto);
+  }
   @Post('evidence')
   @Permissions('legal.integration.acceptances.create')
   @Header('Cache-Control', 'no-store')
@@ -89,6 +99,15 @@ export class EvidenceController {
     @Req() req: IntegrationRequest,
   ) {
     return this.service.pending(req.integrationCaller, dto);
+  }
+  @Post('pending/prepare')
+  @Permissions('legal.integration.acceptances.prepare')
+  @Header('Cache-Control', 'no-store')
+  preparePending(
+    @Body(validation) dto: EvaluateSetDto,
+    @Req() req: IntegrationRequest,
+  ) {
+    return this.service.preparePending(req.integrationCaller, dto);
   }
   @Post('evidence/history')
   @Permissions('legal.integration.acceptances.prepare')

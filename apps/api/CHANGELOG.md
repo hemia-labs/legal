@@ -1,5 +1,18 @@
 # api
 
+## 0.6.0
+
+### Minor Changes
+
+- 2457e39: Manage document sets from the integration detail and discover account document sets with their effective publications and acceptance rules.
+- 2457e39: Allow document sets to share pending status and evidence history within an organization while preserving the verified signer on the receipt.
+
+## 0.5.0
+
+### Minor Changes
+
+- 8315302: Prepare subject-bound review snapshots containing only pending documents. Preserve earlier evidence and keep public registration snapshots complete.
+
 ## 0.4.0
 
 ### Minor Changes
