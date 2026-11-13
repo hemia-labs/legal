@@ -122,7 +122,7 @@ export class DocumentSetsService {
     // unless the selected organization is a configured platform operator.
     if (
       actor.authorization?.authenticatedOrganizationId &&
-      !this.registry.platformOperatorFor(actor.authorization)
+      !this.registry.platformOperatorFor(actor, applicationId)
     )
       throw new ForbiddenException(
         'Application-wide policy management required',
@@ -148,7 +148,14 @@ export class DocumentSetsService {
       'SELECT * FROM legal_document_sets WHERE application_id=$1 ORDER BY key',
       [applicationId],
     );
-    return rows.map((r) => ({
+    const visible: SetRow[] = [];
+    for (const row of rows) {
+      if (
+        await this.registry.canManageSource(actor, row.source_id, applicationId)
+      )
+        visible.push(row);
+    }
+    return visible.map((r) => ({
       applicationId: r.application_id,
       key: r.key,
       name: r.name,
@@ -210,6 +217,16 @@ export class DocumentSetsService {
         throw new BadRequestException(
           'Enabled integration for this application required',
         );
+      if (
+        !(await this.registry.canManageSource(
+          actor,
+          source.id,
+          applicationId,
+          m,
+          true,
+        ))
+      )
+        throw new ForbiddenException('Integration outside consumer scope');
       if (dto.verification === 'verified_session') {
         const service = resolveVerificationService(
           source.services,
@@ -239,6 +256,17 @@ export class DocumentSetsService {
         'SELECT * FROM legal_document_sets WHERE application_id=$1 AND key=$2 FOR UPDATE',
         [applicationId, key],
       );
+      if (
+        old &&
+        !(await this.registry.canManageSource(
+          actor,
+          old.source_id,
+          applicationId,
+          m,
+          true,
+        ))
+      )
+        throw new ForbiddenException('Document set outside consumer scope');
       if (
         (old && dto.expectedRevision !== old.revision) ||
         (!old && dto.expectedRevision)

@@ -8,6 +8,7 @@ const load = createRequire(
 );
 const { DataSource } = load('typeorm');
 const { Test } = load('@nestjs/testing');
+const { ConfigService } = load('@nestjs/config');
 const base = path.resolve(
   __dirname,
   '../../../apps/api/dist/src/modules/legal',
@@ -30,8 +31,8 @@ const { PermissionsGuard } = require(
 const verification = require(
   base + '/integrations/acceptance/verification-http',
 );
-const { isPlatformOperator } = require(
-  base + '/authorization/legal-authorization',
+const { IntegrationRegistryService } = require(
+  base + '/integrations/registry/integration-registry.service',
 );
 const { DocumentSets1793318400000 } = require(
   path.resolve(base, '../../database/migrations/1793318400000-DocumentSets'),
@@ -163,14 +164,23 @@ let app;
       [system],
     );
     const platformOrganization = randomUUID();
+    const registryConfig = new ConfigService({
+      authorization: { platformOrganizationIds: [platformOrganization] },
+    });
+    const registry = new IntegrationRegistryService(
+      db,
+      registryConfig,
+      {},
+    );
     const service = new DocumentSetsService(
       db,
       legal,
       {
         contextUrl: (value) => new URL(value),
         production: false,
-        platformOperatorFor: (authorization) =>
-          isPlatformOperator(authorization, [platformOrganization]),
+        platformOperatorFor: (actor, applicationId) =>
+          registry.platformOperatorFor(actor, applicationId),
+        canManageSource: (...args) => registry.canManageSource(...args),
       },
       { get: async () => 'synthetic-token' },
     );
@@ -967,7 +977,58 @@ let app;
       ).status,
       403,
     );
+    // A selective binding enables only this identity and application, without
+    // granting every member of the organization access to shared policies.
+    registryConfig.set('authorization.platformOrganizationIds', []);
+    registryConfig.set('authorization.platformOperatorBindings', [{
+      identityIssuer: actor.identityIssuer,
+      subjectId: actor.subjectId,
+      organizationId: platformOrganization,
+      applicationIds: [application],
+    }]);
+    const selectedOperator = {
+      ...actor,
+      authorization: {
+        assignments: [],
+        expiresAt: Math.floor(Date.now() / 1000) + 300,
+        authenticatedOrganizationId: platformOrganization,
+      },
+    };
+    liveActor = selectedOperator;
+    assert.equal((await http('GET', listPath)).status, 200);
+    const selectiveUpdate = await http('PUT', contractSetPath, {
+      ...representativeContract,
+      expectedRevision: linked.body.revision,
+    });
+    assert.equal(selectiveUpdate.status, 200, JSON.stringify(selectiveUpdate));
+    for (const change of [
+      { subjectId: randomUUID() },
+      { identityIssuer: 'https://another-identity.example' },
+      { actorType: 'service' },
+      { authorization: { ...selectedOperator.authorization, expiresAt: 1 } },
+    ]) {
+      liveActor = { ...selectedOperator, ...change };
+      assert.equal((await http('GET', listPath)).status, 403);
+      assert.equal((await http('PUT', contractSetPath, {
+        ...representativeContract,
+        expectedRevision: selectiveUpdate.body.revision,
+      })).status, 403);
+    }
+    liveActor = selectedOperator;
+    assert.equal((await http('GET', listPath.replace(application, randomUUID()))).status, 403);
+    await db.query('INSERT INTO external_identity_source_organizations VALUES($1,$2,true)', [source, randomUUID()]);
+    const foreignSourceSets = await http('GET', listPath);
+    assert.equal(foreignSourceSets.status, 200);
+    assert.deepEqual(foreignSourceSets.body, []);
+    assert.equal((await http('PUT', contractSetPath, {
+      ...representativeContract,
+      expectedRevision: selectiveUpdate.body.revision,
+    })).status, 403);
+    await db.query('DELETE FROM external_identity_source_organizations WHERE source_id=$1', [source]);
+    registryConfig.set('authorization.platformOperatorBindings', []);
+    assert.equal((await http('GET', listPath)).status, 403);
     liveActor = actor;
+    assert.equal((await http('GET', listPath)).status, 200);
     const count = (
       await db.query('SELECT count(*)::int n FROM audit_events')
     )[0].n;

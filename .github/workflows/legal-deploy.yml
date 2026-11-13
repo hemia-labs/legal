@@ -86,6 +86,7 @@ jobs:
       REGISTRY_HOST: ${{ vars.REGISTRY_HOST }}
       HEMIA_AUTHORIZATION_MODE: ${{ vars.HEMIA_AUTHORIZATION_MODE }}
       LEGAL_PLATFORM_ORGANIZATION_IDS: ${{ vars.LEGAL_PLATFORM_ORGANIZATION_IDS }}
+      LEGAL_PLATFORM_OPERATOR_BINDINGS: ${{ vars.LEGAL_PLATFORM_OPERATOR_BINDINGS }}
       AMQP_HOST: ${{ vars.AMQP_HOST }}
     steps:
       - name: Set temporary credential paths
