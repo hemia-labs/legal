@@ -16,7 +16,8 @@
     "version:legal": "node scripts/version-legal.mjs",
     "test:release": "node --test test/release/*.test.mjs",
     "test:deploy": "python3 -m unittest discover -s test/deploy -p 'test_*.py'",
-    "version:legal-sdk": "node scripts/version-legal-sdk.mjs"
+    "version:legal-sdk": "node scripts/version-legal-sdk.mjs",
+    "dev:redis": "node scripts/dev-redis.cjs"
   },
   "packageManager": "bun@1.4.4",
   "devDependencies": {

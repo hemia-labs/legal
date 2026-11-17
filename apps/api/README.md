@@ -156,3 +156,41 @@ En modo `authenticated`, las integraciones compartidas (sin restricción de orga
 La administración de esta configuración técnica no amplía las políticas de las máquinas ni el acceso a aceptaciones, evidencia o notificaciones de otras organizaciones. La administración humana de clientes de servicio conserva el alcance de la organización seleccionada y no permite delegar acceso global.
 
 Los conjuntos de documentos siguen el alcance de su integración: en `authenticated` pueden consultarse y administrarse los de integraciones compartidas o exclusivas de la organización activa, sin lista manual de UUID. Se ocultan los conjuntos de integraciones restringidas a otras organizaciones o con alcance mixto. Las escrituras verifican tanto la integración de destino como la del conjunto existente, para impedir apropiarse de un conjunto ajeno cambiando `sourceId`. En modo `roles` se mantienen los permisos y alcances de aplicación. La evidencia, las notificaciones y los accesos de máquinas conservan su aislamiento.
+
+
+## Redis local autenticado en desarrollo
+
+Cuando Vault está habilitado, `cache/redis` sigue definiendo la contraseña y
+la base de datos. Si su host remoto no es alcanzable desde el equipo de
+desarrollo, se puede usar exclusivamente un transporte local explícito:
+
+```dotenv
+REDIS_LOCAL_TRANSPORT=true
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6381
+```
+
+Guardar esos valores en `apps/api/.env.local`, con los secretos existentes de
+Vault y `SECRETS_ENABLED=true`. El indicador se rechaza fuera de development/test
+y si el host no es loopback. Con el indicador desactivado, el host y puerto de
+Vault mantienen su prioridad. No configurar ese indicador en producción.
+
+Con `redis-server` instalado en el equipo, ejecutar desde la raíz:
+
+```bash
+bun run dev:redis
+bun run dev:api
+```
+
+El primer comando inicia una instancia dedicada autenticada, o verifica la
+existente sin reiniciarla. Obtiene la contraseña de Vault en memoria, la pasa
+a Redis por stdin y exige PONG autenticado y denegación sin contraseña. No
+reconfigura otro servidor ni imprime credenciales. La instancia sólo escucha
+en loopback y conserva sus sesiones en `.local/redis`, un directorio privado
+ignorado por Git que contiene persistencia, PID y log. El comando debe
+ejecutarse de nuevo después de reiniciar el equipo.
+
+La API debe devolver 200 en `/health/ready`; el control conserva las
+comprobaciones de migraciones, Redis y Event Bus. Para las pruebas del Jest
+instalado localmente se usa Node 24.9 o superior (require ESM en VM); no se
+modifican dependencias para esta corrección.

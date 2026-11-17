@@ -4,7 +4,11 @@ import { SecretsService } from '@hemia/secrets/nestjs';
 import IORedis, { type RedisOptions } from 'ioredis';
 import { SecretsModule } from '../../secrets/secrets.module';
 import { REDIS, RedisSessionStore } from './redis-session-store';
-import { isRedisSecret, type RedisSecret } from './redis.types';
+import {
+  isRedisSecret,
+  redisConnectionOptions,
+  type RedisSecret,
+} from './redis.types';
 
 @Module({
   imports: [ConfigModule, SecretsModule],
@@ -13,10 +17,14 @@ import { isRedisSecret, type RedisSecret } from './redis.types';
       provide: REDIS,
       inject: [ConfigService, SecretsService],
       useFactory: async (config: ConfigService, secrets: SecretsService) => {
-        const redis = config.getOrThrow<RedisOptions>('redis');
+        const { localTransport, ...redis } = config.getOrThrow<
+          RedisOptions & { localTransport?: boolean }
+        >('redis');
 
         if (!config.get<boolean>('secrets.enabled', false)) {
-          return new IORedis(redis);
+          return new IORedis(
+            redisConnectionOptions(redis, undefined, localTransport),
+          );
         }
 
         const secret = await secrets.getRequired<RedisSecret>('cache/redis');
@@ -26,13 +34,9 @@ import { isRedisSecret, type RedisSecret } from './redis.types';
           );
         }
 
-        return new IORedis({
-          ...redis,
-          host: secret.redis_host || redis.host,
-          port: secret.redis_port,
-          password: secret.redis_password || undefined,
-          db: secret.redis_db,
-        });
+        return new IORedis(
+          redisConnectionOptions(redis, secret, localTransport),
+        );
       },
     },
     RedisSessionStore,

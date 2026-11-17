@@ -13,3 +13,6 @@ docs/
 !**/.env.example
 **/tsconfig.tsbuildinfo
 **/__pycache__/
+
+# Authenticated local development Redis (sessions, AOF, logs and PID).
+.local/
