@@ -1,6 +1,7 @@
 import { registerAs } from '@nestjs/config';
 
 export default registerAs('redis', () => ({
+  localTransport: process.env.REDIS_LOCAL_TRANSPORT === 'true',
   host: process.env.REDIS_HOST ?? 'localhost',
   port: Number(process.env.REDIS_PORT) || 6379,
   password: process.env.REDIS_PASSWORD || undefined,
