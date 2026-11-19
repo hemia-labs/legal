@@ -56,3 +56,10 @@ El catálogo de Sistemas y sus esquemas se administran desde Console; Legal cons
 ## CI, releases y producción
 
 Ver [DEPLOY.md](DEPLOY.md) para el pipeline, las imágenes, la configuración de GitHub/servidor y las operaciones explícitas de migración, deploy y rollback. Ejecutar `bun run ci` con Node 24, Bun 1.4.4 y Docker para validar el mismo flujo que Actions.
+
+
+### Read-only deployment diagnostics
+
+Run the manual **Legal deployment** workflow from `main` with operation `diagnose`; leave `release_tag` empty. It uses the existing protected `prod` environment, Tailscale identity, pinned SSH host and dedicated deploy user. It does not download a release, update environment/AMQP settings, run the deploy controller, recreate containers, migrate or seed. The versioned script runs over SSH stdin without remote temporary files.
+
+Diagnostics read only Docker containers labelled project `hemia-legal` and service `api`/`web`: image, state, healthcheck output and the last 80 log entries from 30 minutes (bounded output). Secrets, authorization/cookie values, private keys, JWTs and URL credentials are redacted before output. It never requests container environment variables or reads `production.env`. Treat the resulting logs as operational information and review them within the protected workflow.

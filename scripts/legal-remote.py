@@ -15,7 +15,7 @@ if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9.-]*', host) or not re.fullmatch(r'[a
     raise ValueError('Expected a hostname/IPv4 and dedicated Unix user')
 if not re.fullmatch(r'/[a-zA-Z0-9/_-]+', root) or '..' in Path(root).parts or not 1 <= port <= 65535:
     raise ValueError('Invalid deployment root/port')
-if operation not in ['deploy', 'rollback', 'migrate']:
+if operation not in ['deploy', 'rollback', 'migrate', 'diagnose']:
     raise ValueError('Invalid operation')
 ssh_options = ['-i', os.environ['DEPLOY_KEY_FILE'], '-o', 'IdentitiesOnly=yes',
                '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
@@ -24,6 +24,12 @@ ssh_options = ['-i', os.environ['DEPLOY_KEY_FILE'], '-o', 'IdentitiesOnly=yes',
                '-o', 'ServerAliveCountMax=4']
 target = user + '@' + host
 ssh = ['ssh', *ssh_options, '-p', str(port), target]
+if operation == 'diagnose':
+    # Use the trusted main checkout, not release artifacts; no remote files or app mutations.
+    script = Path(__file__).with_name('legal-diagnostics.py').read_text()
+    subprocess.run(ssh + ['python3 -'], input=script, text=True, check=True)
+    sys.exit(0)
+
 remote = subprocess.check_output(ssh + ['mktemp -d /tmp/legal-release.XXXXXXXX'], text=True).strip()
 if not re.fullmatch(r'/tmp/legal-release\.[a-zA-Z0-9]+', remote):
     raise ValueError('Unexpected temporary directory')
