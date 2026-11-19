@@ -24,6 +24,10 @@ class DependencyProbeTests(unittest.TestCase):
         self.assertIn('vault.database', output['calls'])
         self.assertIn('SELECT 1 AS ok', output['calls'])
         self.assertEqual(result['bus_sdk_ping'], 'not_executed_would_declare_queue')
+        self.assertTrue(result['rabbitmq']['handshake'])
+        self.assertTrue(result['rabbitmq']['existing_exchange_passive_check'])
+        self.assertEqual(result['postgres']['migrations']['unqualified']['row_count'], 7)
+        self.assertEqual(result['postgres']['migrations']['public']['row_count'], 7)
 
     def test_errors_are_redacted_and_a_failed_redis_ping_does_not_hide_postgres(self):
         output = self.run_probe('redis-error')
@@ -38,3 +42,22 @@ class DependencyProbeTests(unittest.TestCase):
         bootstrap = self.run_probe('bootstrap-error')['result']
         self.assertEqual(bootstrap['bootstrap']['status'], 'error')
         self.assertNotIn('redis', bootstrap)
+
+    def test_exact_migration_reads_distinguish_search_path_and_permissions(self):
+        path = self.run_probe('pg-search-path')['result']['postgres']
+        self.assertEqual(path['migrations']['unqualified']['code'], '42P01')
+        self.assertEqual(path['migrations']['public']['status'], 'ok')
+        self.assertFalse(path['unqualified_resolves_public'])
+        denied = self.run_probe('pg-permission')['result']['postgres']['migrations']
+        self.assertEqual(denied['unqualified']['code'], '42501')
+        self.assertEqual(denied['public']['code'], '42501')
+
+    def test_broker_auth_and_passive_failures_preserve_progress_without_writes(self):
+        auth = self.run_probe('amqp-auth-denied')['result']['rabbitmq']
+        self.assertEqual(auth['status'], 'error')
+        self.assertEqual(auth['code'], '403')
+        self.assertFalse(auth['handshake'])
+        passive = self.run_probe('amqp-passive-denied')['result']['rabbitmq']
+        self.assertTrue(passive['handshake'])
+        self.assertFalse(passive['existing_exchange_passive_check'])
+        self.assertEqual(passive['code'], '403')
