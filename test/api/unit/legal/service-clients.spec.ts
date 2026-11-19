@@ -128,13 +128,12 @@ describe('service client policies', () => {
   });
 });
 
-describe('authenticated human service policy scope', () => {
+describe('human service policy role scope', () => {
   const request = {
     actor: {
       authorization: {
         assignments: [],
         expiresAt: Math.floor(Date.now() / 1000) + 300,
-        authenticatedOrganizationId: organizationId,
       },
       traceId: 'test',
       identityIssuer: 'https://identity.test',
@@ -177,7 +176,7 @@ describe('authenticated human service policy scope', () => {
     { ids: [] },
     { ids: [foreign] },
     { ids: [organizationId, foreign] },
-  ])('rejects new global or foreign policy %j', async ({ ids }) => {
+  ])('denies creating any policy without integration grants %j', async ({ ids }) => {
     const f = fixture();
     await expect(
       f.service.save(request, {
@@ -194,7 +193,7 @@ describe('authenticated human service policy scope', () => {
     { ids: [foreign] },
     { ids: [organizationId, foreign] },
   ])(
-    'does not take over or enable existing broader clients %j',
+    'denies editing existing clients without integration grants %j',
     async ({ ids }) => {
       const f = fixture(ids);
       await expect(
@@ -208,21 +207,49 @@ describe('authenticated human service policy scope', () => {
       expect(f.repository.save).not.toHaveBeenCalled();
     },
   );
-  it('saves only selected organization policies while locking existing policy', async () => {
+  it('saves authorized policies while locking existing policy', async () => {
     const f = fixture([organizationId]);
     await expect(
-      f.service.save(request, {
-        oauthIssuer: 'https://identity.test',
-        clientId: 'client',
-        enabled: true,
-        policy: policy([organizationId]),
-      }),
+      f.service.save(
+        {
+          ...request,
+          actor: {
+            ...request.actor,
+            authorization: {
+              expiresAt: Math.floor(Date.now() / 1000) + 300,
+              assignments: [
+                {
+                  assignment_id: applicationId,
+                  assignment_version: 1,
+                  role_code: 'legal.integration_manager',
+                  valid_from: 1,
+                  expires_at: null,
+                  resource_scope: {
+                    type: 'applications',
+                    ids: [applicationId],
+                  },
+                  consumer_scope: {
+                    type: 'not_applicable',
+                    organization_ids: [],
+                  },
+                },
+              ],
+            },
+          },
+        },
+        {
+          oauthIssuer: 'https://identity.test',
+          clientId: 'client',
+          enabled: true,
+          policy: policy([organizationId]),
+        },
+      ),
     ).resolves.toMatchObject({ enabled: true });
     expect(f.repository.findOne).toHaveBeenCalledWith(
       expect.objectContaining({ lock: { mode: 'pessimistic_write' } }),
     );
   });
-  it('filters global, foreign and mixed clients from listing', async () => {
+  it('denies listing without assigned integration permissions', async () => {
     const rows = [
       [],
       [foreign],
@@ -235,8 +262,6 @@ describe('authenticated human service policy scope', () => {
       } as unknown as DataSource,
       new ConfigService(),
     );
-    await expect(service.list(request)).resolves.toEqual([
-      expect.objectContaining({ id: '3' }),
-    ]);
+    await expect(service.list(request)).rejects.toThrow();
   });
 });

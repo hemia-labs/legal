@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import authorizationConfig from '../../../../apps/api/src/config/authorization.config';
 import {
-  consumerOrganizationsAllowed,
   grantsFor,
   permissionsForAuthorization,
   validateLegalContext,
@@ -36,26 +35,42 @@ function claims() {
     assignments: [],
   };
 }
-describe('Authenticated Legal action policy', () => {
-  it('requires an explicit flag; the default still denies empty role assignments', () => {
+function assignment(role = 'legal.viewer') {
+  return {
+    assignment_id: randomUUID(),
+    assignment_version: 1,
+    role_code: role,
+    resource_scope: { type: 'legal_global', ids: [] },
+    consumer_scope: { type: 'not_applicable', organization_ids: [] },
+    valid_from: 1,
+    expires_at: null,
+  };
+}
+function assigned(role = 'legal.viewer') {
+  return { ...claims(), assignments: [assignment(role)] };
+}
+describe('Legal role authorization', () => {
+  it('denies assignment-free signed contexts and never synthesizes grants', () => {
     expect(() => validateLegalContext(claims(), expected)).toThrow();
-    const auth = validateLegalContext(claims(), expected, 'authenticated');
-    expect(auth.assignments).toEqual([]);
-    expect(grantsFor(auth, 'legal.issuers.create')[0]).toEqual({
-      resource_scope: { type: 'legal_global', ids: [] },
-      consumer_scope: {
-        type: 'organizations',
-        organization_ids: [expected.organizationId],
-      },
-      managesCatalog: true,
-    });
-    expect(grantsFor(auth, 'legal.issuers.create')[0]).not.toHaveProperty(
-      'role_code',
-    );
-    expect(permissionsForAuthorization(auth)).toContain(
-      'legal.integrations.create',
-    );
-    expect(() => grantsFor(auth, 'legal.unknown.permission')).toThrow();
+    const auth = {
+      assignments: [],
+      expiresAt: Math.floor(Date.now() / 1000) + 300,
+    };
+    expect(() => grantsFor(auth, 'legal.issuers.create')).toThrow();
+    expect(permissionsForAuthorization(auth)).toEqual([]);
+  });
+  it('allows assigned reads and denies viewer mutations', () => {
+    const auth = validateLegalContext(assigned(), expected);
+    expect(grantsFor(auth, 'legal.documents.view')).toHaveLength(1);
+    expect(permissionsForAuthorization(auth)).toContain('legal.documents.view');
+    for (const permission of [
+      'legal.documents.create',
+      'legal.integrations.edit',
+      'legal.notifications.retry',
+    ]) {
+      expect(() => grantsFor(auth, permission)).toThrow();
+      expect(permissionsForAuthorization(auth)).not.toContain(permission);
+    }
   });
   it.each([
     'sub',
@@ -65,84 +80,62 @@ describe('Authenticated Legal action policy', () => {
     'organization_id',
     'membership_id',
     'product_code',
-  ])('still denies wrong %s bindings without roles', (key) => {
+  ])('denies wrong %s bindings with otherwise valid grants', (key) => {
     expect(() =>
-      validateLegalContext(
-        { ...claims(), [key]: randomUUID() },
-        expected,
-        'authenticated',
-      ),
+      validateLegalContext({ ...assigned(), [key]: randomUUID() }, expected),
     ).toThrow();
   });
-  it('denies expired, extended, malformed and old-mode contexts', () => {
+  it('denies expired, extended, malformed and revoked contexts', () => {
     for (const patch of [
       { exp: 1 },
       { exp: Math.floor(Date.now() / 1000) + 3600 },
-      { catalog_version: 1 },
       { assignments: [{}] },
       { extra: true },
-      { assignments: null },
+      { assignments: [] },
     ]) {
       expect(() =>
-        validateLegalContext(
-          { ...claims(), ...patch },
-          expected,
-          'authenticated',
-        ),
+        validateLegalContext({ ...assigned(), ...patch }, expected),
       ).toThrow();
     }
-    const auth = validateLegalContext(claims(), expected, 'authenticated');
+    const auth = validateLegalContext(assigned(), expected);
     expect(() =>
-      grantsFor({ ...auth, expiresAt: 1 }, 'legal.issuers.create'),
+      grantsFor({ ...auth, expiresAt: 1 }, 'legal.documents.view'),
     ).toThrow();
+    expect(() =>
+      permissionsForAuthorization({ ...auth, expiresAt: 1 }),
+    ).toThrow();
+    const expired = {
+      ...auth,
+      assignments: auth.assignments.map((a) => ({ ...a, expires_at: 1 })),
+    };
+    expect(() => grantsFor(expired, 'legal.documents.view')).toThrow();
+    expect(permissionsForAuthorization(expired)).toEqual([]);
   });
-  it('keeps consumer evidence in the selected organization without exposing all_organizations', () => {
-    const auth = validateLegalContext(claims(), expected, 'authenticated');
-    const scoped = scopePredicate(
-      auth,
-      'legal.notifications.view',
-      'notifications',
-    );
-    expect(scoped.sql).toContain('t.organization_id = ANY');
-    expect(scoped.parameters.lc0).toEqual([expected.organizationId]);
+  it('requires explicit consumer grants and keeps evidence organization scoped', () => {
+    const context = assigned('legal.auditor');
+    context.assignments[0].consumer_scope = {
+      type: 'organizations',
+      organization_ids: [expected.organizationId],
+    };
+    const auth = validateLegalContext(context, expected);
     const audit = scopePredicate(auth, 'legal.audit.view', 'audit_events');
     expect(audit.sql).toContain('ev.organization_id = ANY');
+    expect(audit.parameters.lc0).toEqual([expected.organizationId]);
   });
-  it('uses a validated explicit mode in development and production and defaults to roles', () => {
-    const old = process.env.HEMIA_AUTHORIZATION_MODE;
-    const oldNodeEnv = process.env.NODE_ENV;
+  it('accepts only roles in every environment and defaults to roles', () => {
+    const original = process.env.HEMIA_AUTHORIZATION_MODE;
     try {
       delete process.env.HEMIA_AUTHORIZATION_MODE;
       expect(authorizationConfig().mode).toBe('roles');
-      process.env.HEMIA_AUTHORIZATION_MODE = 'authenticated';
-      for (const environment of ['development', 'production']) {
-        process.env.NODE_ENV = environment;
-        expect(authorizationConfig().mode).toBe('authenticated');
+      process.env.HEMIA_AUTHORIZATION_MODE = 'roles';
+      expect(authorizationConfig().mode).toBe('roles');
+      for (const mode of ['authenticated', 'invalid', '']) {
+        process.env.HEMIA_AUTHORIZATION_MODE = mode;
+        expect(() => authorizationConfig()).toThrow('HEMIA_AUTHORIZATION_MODE');
       }
-      process.env.HEMIA_AUTHORIZATION_MODE = 'invalid';
-      expect(() => authorizationConfig()).toThrow('HEMIA_AUTHORIZATION_MODE');
     } finally {
-      if (oldNodeEnv === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = oldNodeEnv;
-      if (old === undefined) delete process.env.HEMIA_AUTHORIZATION_MODE;
-      else process.env.HEMIA_AUTHORIZATION_MODE = old;
+      if (original === undefined) delete process.env.HEMIA_AUTHORIZATION_MODE;
+      else process.env.HEMIA_AUTHORIZATION_MODE = original;
     }
-  });
-  it('allows shared catalog configuration without broadening machine grants', () => {
-    const own = validateLegalContext(claims(), expected, 'authenticated');
-    const foreign = randomUUID();
-    expect(consumerOrganizationsAllowed(own, [], true)).toBe(true);
-    expect(consumerOrganizationsAllowed(own, [])).toBe(false);
-    expect(
-      consumerOrganizationsAllowed(own, [expected.organizationId], true),
-    ).toBe(true);
-    expect(consumerOrganizationsAllowed(own, [foreign], true)).toBe(false);
-    expect(
-      consumerOrganizationsAllowed(
-        own,
-        [expected.organizationId, foreign],
-        true,
-      ),
-    ).toBe(false);
   });
 });
