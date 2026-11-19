@@ -38,7 +38,7 @@ class AutoDeployTest(unittest.TestCase):
         self.assertNotIn('gh workflow run', job)
         deploy = (ROOT / '.github/workflows/legal-deploy.yml').read_text()
         self.assertIn('workflow_dispatch:', deploy)
-        self.assertIn('options: [deploy, rollback, migrate]', deploy)
+        self.assertIn('options: [deploy, rollback, migrate, diagnose]', deploy)
         self.assertIn("if: needs.enabled.outputs.deploy == 'true'", deploy)
 
     def test_automatic_deployment_requires_exact_true(self):

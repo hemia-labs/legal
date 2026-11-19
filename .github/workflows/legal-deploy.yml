@@ -22,13 +22,13 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'Deploy, roll back images, or explicitly run migrations (never seeds)'
+        description: 'Deploy, roll back, migrate (never seeds), or read container diagnostics'
         type: choice
-        options: [deploy, rollback, migrate]
+        options: [deploy, rollback, migrate, diagnose]
         default: deploy
       release_tag:
-        description: 'Published release: legal-vMAJOR.MINOR.PATCH'
-        required: true
+        description: 'Published legal-vMAJOR.MINOR.PATCH; leave empty for diagnose'
+        required: false
         type: string
       acknowledge_schema:
         description: 'Rollback only: I reviewed compatibility with the current database schema'
@@ -95,7 +95,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Validate configuration and requested release
+      - name: Validate configuration
         env:
           ENABLE_DEPLOY: ${{ vars.ENABLE_LEGAL_DEPLOY }}
           TS_CLIENT_ID: ${{ vars.TS_CLIENT_ID }}
@@ -108,15 +108,22 @@ jobs:
           python3 - <<'PY'
           import os,re
           from pathlib import Path
-          assert os.environ['ENABLE_DEPLOY'] == 'true', 'Set ENABLE_LEGAL_DEPLOY=true after provisioning'
-          for key in ['REGISTRY_HOST','DEPLOY_HOST','DEPLOY_USER','DEPLOY_PATH','TS_CLIENT_ID','TS_AUDIENCE','PRIVATE_KEY','KNOWN_HOSTS']:
+          operation=os.environ['OPERATION']
+          assert operation in ['deploy','rollback','migrate','diagnose'], 'Invalid operation'
+          if operation != 'diagnose':
+              assert os.environ['ENABLE_DEPLOY'] == 'true', 'Set ENABLE_LEGAL_DEPLOY=true after provisioning'
+              assert os.environ.get('REGISTRY_HOST'), 'Missing configuration: REGISTRY_HOST'
+              assert re.fullmatch(r'legal-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', os.environ['RELEASE_TAG'])
+          for key in ['DEPLOY_HOST','DEPLOY_USER','DEPLOY_PATH','TS_CLIENT_ID','TS_AUDIENCE','PRIVATE_KEY','KNOWN_HOSTS']:
               assert os.environ.get(key), 'Missing configuration: ' + key
-          assert re.fullmatch(r'legal-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', os.environ['RELEASE_TAG'])
           if os.environ['OPERATION'] == 'migrate':
               assert os.environ['BACKUP_CONFIRMATION'] == 'I_HAVE_A_BACKUP', 'Verify backup before migrating'
           for name,value in [('DEPLOY_KEY_FILE','PRIVATE_KEY'),('DEPLOY_KNOWN_HOSTS_FILE','KNOWN_HOSTS')]:
               path=Path(os.environ[name]); path.write_text(os.environ[value]+'\n'); path.chmod(0o600)
           PY
+      - name: Validate and download requested release
+        if: inputs.operation != 'diagnose'
+        run: |
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
             --jq 'if .draft or .prerelease or (.immutable != true) then error("Expected a published immutable stable release") else .tag_name end'
           gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/legal-release" \
@@ -137,7 +144,7 @@ jobs:
           oauth-client-id: ${{ vars.TS_CLIENT_ID }}
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:hemia-ci
-      - name: Deploy the selected release through SSH
+      - name: Run the selected operation through SSH
         env:
           OPERATION: ${{ inputs.operation }}
           ACKNOWLEDGE_SCHEMA: ${{ inputs.acknowledge_schema }}
