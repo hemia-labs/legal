@@ -25,10 +25,10 @@ async function bounded(promise, ms) {
 async function probe(name, run) {
   const start = Date.now();
   try { result[name] = { status: 'ok', ...await bounded(run(), 5000), elapsed_ms: Date.now() - start }; }
-  catch (error) { result[name] = { ...failure(error), elapsed_ms: Date.now() - start }; }
+  catch (error) { result[name] = { ...result[name], ...failure(error), elapsed_ms: Date.now() - start }; }
 }
 async function main() {
-  let redis, pg;
+  let redis, pg, broker;
   try {
     const { Module } = require('@nestjs/common');
     const { NestFactory } = require('@nestjs/core');
@@ -67,13 +67,42 @@ async function main() {
         await pg.connect();
         await pg.query('SELECT 1 AS ok');
         const schema = await pg.query("SELECT to_regclass('public.migrations') IS NOT NULL AS migrations_table_present");
-        return { select_one: true, migrations_table_present: schema.rows[0].migrations_table_present };
+        result.postgres = { select_one: true, migrations_table_present: schema.rows[0].migrations_table_present, migrations: {} };
+        for (const [name, sql] of [['unqualified', 'SELECT name FROM migrations'], ['public', 'SELECT name FROM public.migrations']]) {
+          try { result.postgres.migrations[name] = { status: 'ok', row_count: (await pg.query(sql)).rowCount }; }
+          catch (error) { result.postgres.migrations[name] = failure(error); }
+        }
+        try {
+          const path = await pg.query("SELECT current_schema() = 'public' AS current_schema_is_public, current_schemas(false) @> ARRAY['public']::name[] AS search_path_includes_public, to_regclass('migrations') = to_regclass('public.migrations') AS unqualified_resolves_public");
+          for (const key of ['current_schema_is_public', 'search_path_includes_public', 'unqualified_resolves_public']) result.postgres[key] = path.rows[0][key] === true;
+        } catch (error) { result.postgres.schema_check = failure(error); }
+        return result.postgres;
+      }),
+      probe('rabbitmq', async () => {
+        result.rabbitmq = { handshake: false, existing_exchange_passive_check: false };
+        // Resolve the existing transport without loading the SDK's mutating setup/ping.
+        const { createRequire } = require('node:module');
+        const busRequire = createRequire(require.resolve('@hemia/event-bus'));
+        const managerRequire = createRequire(busRequire.resolve('amqp-connection-manager'));
+        const amqp = managerRequire('amqplib');
+        const url = process.env.AMQP_URL;
+        if (!url) throw new Error('AMQP_URL_missing');
+        const parsed = new URL(url);
+        if (parsed.password) privateValues.add(decodeURIComponent(parsed.password));
+        if (parsed.username) privateValues.add(decodeURIComponent(parsed.username));
+        broker = await amqp.connect(url, { timeout: 3000, clientProperties: { connection_name: 'hemia-legal-readonly-diagnostics' } });
+        broker.on('error', () => {});
+        result.rabbitmq.handshake = true;
+        const channel = await broker.createChannel();
+        channel.on('error', () => {});
+        await channel.checkExchange('hemia.events');
+        return { handshake: true, existing_exchange_passive_check: true };
       })
     ]);
   } catch (error) { result.bootstrap = failure(error); }
   finally {
     redis?.disconnect();
-    await bounded(Promise.allSettled([pg?.end()]), 1000).catch(() => {});
+    await bounded(Promise.allSettled([pg?.end(), broker?.close()]), 1000).catch(() => {});
   }
   clearTimeout(watchdog);
   finish();
