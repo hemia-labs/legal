@@ -64,6 +64,26 @@ class DiagnosticsTests(unittest.TestCase):
         for service in ['api', 'web']:
             self.assertLessEqual(len(result['services'][service]['containers'][0]['logs']), 16000)
 
+    def test_dependency_probe_only_executes_for_verified_running_api(self):
+        calls = []
+        def command(args):
+            calls.append(args)
+            if args[1] == 'ps':
+                service = next(arg.rsplit('=', 1)[1] for arg in args if arg.startswith('label=com.docker.compose.service='))
+                return 0, (API if service == 'api' else WEB) + '\n', ''
+            if args[1] == 'inspect':
+                return 0, json.dumps({'project': 'hemia-legal', 'service': 'api' if args[-1] == API else 'web', 'status': 'running'}), ''
+            if args[1] == 'logs': return 0, '', ''
+            if args[1] == 'exec':
+                self.assertEqual(args, ['docker', 'exec', API, 'node', '-e', 'fixed-readonly-probe'])
+                return 0, json.dumps({'flags': {'roles_mode': True}, 'redis': {'status': 'ok'}}), ''
+            raise AssertionError(args)
+        with patch.object(diagnostics, 'command', side_effect=command), patch.object(diagnostics, 'DEPENDENCY_PROBE', 'fixed-readonly-probe'):
+            output = diagnostics.diagnose()
+        self.assertTrue(output['services']['api']['containers'][0]['dependencies']['flags']['roles_mode'])
+        self.assertNotIn('dependencies', output['services']['web']['containers'][0])
+        self.assertEqual(sum(args[1] == 'exec' for args in calls), 1)
+
     def test_never_reads_logs_for_unverified_scope_and_reports_docker_errors(self):
         def command(args):
             if args[1] == 'ps': return 0, API + '\n', ''
@@ -85,7 +105,10 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(args[0][-1], 'python3 -')
         self.assertIn('legal-deploy@apps.test', args[0])
         self.assertIn('StrictHostKeyChecking=yes', args[0])
-        self.assertEqual(kwargs['input'], (ROOT / 'scripts/legal-diagnostics.py').read_text())
+        self.assertTrue(kwargs['input'].endswith((ROOT / 'scripts/legal-diagnostics.py').read_text()))
+        self.assertTrue(kwargs['input'].startswith('DEPENDENCY_PROBE = '))
+        compile(kwargs['input'], 'remote-diagnostics.py', 'exec')
+        self.assertIn('default_transaction_read_only', kwargs['input'])
         self.assertTrue(kwargs['check'])
 
     def test_workflow_diagnose_accepts_no_release_and_never_downloads_artifacts(self):

@@ -26,7 +26,8 @@ target = user + '@' + host
 ssh = ['ssh', *ssh_options, '-p', str(port), target]
 if operation == 'diagnose':
     # Use the trusted main checkout, not release artifacts; no remote files or app mutations.
-    script = Path(__file__).with_name('legal-diagnostics.py').read_text()
+    probe = Path(__file__).with_name('legal-dependency-probe.cjs').read_text()
+    script = 'DEPENDENCY_PROBE = ' + repr(probe) + '\n' + Path(__file__).with_name('legal-diagnostics.py').read_text()
     subprocess.run(ssh + ['python3 -'], input=script, text=True, check=True)
     sys.exit(0)
 

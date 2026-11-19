@@ -4,6 +4,7 @@ import re
 import subprocess
 
 PROJECT = 'hemia-legal'
+DEPENDENCY_PROBE = globals().get('DEPENDENCY_PROBE', '')
 SECRET = r'(?:[\w.-]{0,80}(?:password|passwd|passphrase|secret|token|credential|api[_-]?key|private[_-]?key|access[_-]?key|authorization|cookie)[\w.-]{0,80}|pass|key)'
 INSPECT = '{"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"image":{{json .Config.Image}},"status":{{json .State.Status}},"pid":{{json .State.Pid}},"exit_code":{{json .State.ExitCode}},"oom_killed":{{json .State.OOMKilled}},"error":{{json .State.Error}},"health":{{json .State.Health}}}'
 
@@ -63,6 +64,13 @@ def diagnose():
             state = redact(state)
             # Redact before truncation, including multiline keys and healthcheck output.
             state['logs'] = redact(stdout + stderr)[-16000:]
+            if service == 'api' and state.get('status') == 'running' and DEPENDENCY_PROBE:
+                code, output, error = command(['docker', 'exec', container, 'node', '-e', DEPENDENCY_PROBE])
+                try:
+                    state['dependencies'] = redact(json.loads(output)) if code == 0 else {'error': redact(error)[-2000:]}
+                except ValueError:
+                    state['dependencies'] = {'error': 'Dependency probe did not return JSON', 'detail': redact(error)[-2000:]}
+
             if isinstance(state.get('health'), dict):
                 for entry in state['health'].get('Log', []):
                     if isinstance(entry.get('Output'), str):
