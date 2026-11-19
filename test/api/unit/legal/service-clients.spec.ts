@@ -176,18 +176,21 @@ describe('human service policy role scope', () => {
     { ids: [] },
     { ids: [foreign] },
     { ids: [organizationId, foreign] },
-  ])('denies creating any policy without integration grants %j', async ({ ids }) => {
-    const f = fixture();
-    await expect(
-      f.service.save(request, {
-        oauthIssuer: 'https://identity.test',
-        clientId: 'client',
-        enabled: true,
-        policy: policy(ids),
-      }),
-    ).rejects.toThrow();
-    expect(f.repository.save).not.toHaveBeenCalled();
-  });
+  ])(
+    'denies creating any policy without integration grants %j',
+    async ({ ids }) => {
+      const f = fixture();
+      await expect(
+        f.service.save(request, {
+          oauthIssuer: 'https://identity.test',
+          clientId: 'client',
+          enabled: true,
+          policy: policy(ids),
+        }),
+      ).rejects.toThrow();
+      expect(f.repository.save).not.toHaveBeenCalled();
+    },
+  );
   it.each([
     { ids: [] },
     { ids: [foreign] },
