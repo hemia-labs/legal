@@ -1,5 +1,12 @@
 # api
 
+## 0.6.4
+
+### Patch Changes
+
+- e8cd887: Allow an explicit development-only loopback Redis transport while retaining Vault credentials and database selection. Add an authenticated local Redis launcher and restore Legal readiness for local Sandbox checkout.
+- 618507d: Require explicit Legal role assignments for all human actions, reject the retired authenticated mode at startup, and preserve resource, consumer and service authorization boundaries.
+
 ## 0.6.3
 
 ### Patch Changes
