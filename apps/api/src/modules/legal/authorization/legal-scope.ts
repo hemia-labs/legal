@@ -26,8 +26,7 @@ export function scopePredicate(
     permission.endsWith('.cancel');
   const parts = grants.map((grant, index) => {
     const r = grant.resource_scope;
-    const managesCatalog =
-      grant.managesCatalog || grant.role_code === 'legal.catalog_manager';
+    const managesCatalog = grant.role_code === 'legal.catalog_manager';
     const issuerState =
       historical || managesCatalog ? '' : " AND si.status = 'active'";
     const applicationState =

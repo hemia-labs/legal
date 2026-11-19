@@ -36,11 +36,11 @@ try:
     if os.environ.get('BACKUP_CONFIRMATION') == 'I_HAVE_A_BACKUP':
         args.append('--backup-confirmed')
     # Apply non-secret authorization settings through the dedicated deploy user.
-    # An unset CI variable preserves the existing host configuration.
+    # Releases always apply explicit role authorization.
     settings = []
-    mode = os.environ.get('HEMIA_AUTHORIZATION_MODE', '')
+    mode = os.environ.get('HEMIA_AUTHORIZATION_MODE') or 'roles'
     if mode:
-        if mode not in ('roles', 'authenticated'):
+        if mode != 'roles':
             raise ValueError('Invalid HEMIA_AUTHORIZATION_MODE')
         settings.append(('HEMIA_AUTHORIZATION_MODE', mode, 'authmode'))
     configure_setting = r"""import os,re,shutil,sys,tempfile
@@ -48,6 +48,8 @@ from pathlib import Path
 from datetime import datetime,timezone
 p=Path(sys.argv[1])/'shared/production.env'
 key,value,label=sys.argv[2:5]
+if key == 'HEMIA_AUTHORIZATION_MODE' and value != 'roles':
+    raise ValueError('Only roles authorization is supported')
 if not re.fullmatch(r'[A-Z][A-Z0-9_]*',key) or not re.fullmatch(r'[A-Za-z0-9,-]+',value):
     raise ValueError('Invalid setting')
 if not p.is_file() or p.stat().st_mode & 0o077:

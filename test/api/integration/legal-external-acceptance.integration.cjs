@@ -166,42 +166,85 @@ async function main(){
  assert.equal(registrationSource.contextUrl,undefined);
  assert.equal((await registry.catalogOptions(catalogRequest)).documents.length,3);
  assert.ok((await systems.options({actor})).some(s=>s.id===registration.id));
- // Shared integration configuration is available in authenticated mode without a platform UUID list.
- const ownOrganization=randomUUID(),foreignOrganization=randomUUID();
- const human=(organizationId)=>({actor:{identityIssuer:'http://localhost:4000',subjectId:randomUUID(),actorType:'user',traceId:randomUUID(),permissions:[],authorization:{assignments:[],expiresAt:Math.floor(Date.now()/1000)+300,authenticatedOrganizationId:organizationId}}});
- const ownHuman=human(ownOrganization),foreignHuman=human(foreignOrganization);
- assert.equal((await db.query('SELECT count(*)::int n FROM external_identity_source_organizations WHERE source_id=$1',[registrationSource.id]))[0].n,0);
- for(const caller of [ownHuman,foreignHuman]) {
-   const view=(await registry.list(caller)).find(s=>s.id===registrationSource.id);
-   assert.ok(view,'eligible authenticated user lists the shared integration without an organization allowlist');
-   assert.deepEqual(view.organizations,[]);
-   const edited=await registry.save(caller,{systemId:registration.id,applicationId:app,documentIds:[docs[1],docs[0]]},registrationSource.id);
-   assert.equal(edited.id,registrationSource.id);
-   assert.deepEqual(edited.documentIds,[docs[1],docs[0]]);
- }
- // Editing keeps the integration shared and does not create new machine grants or organization restrictions.
- assert.equal((await db.query('SELECT count(*)::int n FROM external_identity_source_organizations WHERE source_id=$1',[registrationSource.id]))[0].n,0);
- await assert.rejects(registry.save(ownHuman,{systemId:registration.id,applicationId:app,documentIds:docs}),e=>e.status===409);
- // Explicit organization restrictions remain enforced for list, edit and disable.
- await db.query('INSERT INTO external_identity_source_organizations(source_id,organization_id,enabled) VALUES($1,$2,true)',[created.id,foreignOrganization]);
- assert.equal((await registry.list(ownHuman)).some(s=>s.id===created.id),false);
- assert.ok((await registry.list(foreignHuman)).some(s=>s.id===created.id));
- await assert.rejects(registry.save(ownHuman,{systemId:second.id,applicationId:app,documentIds:docs},created.id),e=>e.status===403);
- await assert.rejects(registry.disable(ownHuman,created.id),e=>e.status===403);
- const ownEdit=await registry.save(foreignHuman,{systemId:second.id,applicationId:app,documentIds:docs},created.id);
- assert.equal(ownEdit.id,created.id);
- // Mixed organization scopes cannot expose other organizations' configuration either.
- await db.query('INSERT INTO external_identity_source_organizations(source_id,organization_id,enabled) VALUES($1,$2,true)',[created.id,ownOrganization]);
- for(const caller of [ownHuman,foreignHuman]) {
-   assert.equal((await registry.list(caller)).some(s=>s.id===created.id),false);
-   await assert.rejects(registry.save(caller,{systemId:second.id,applicationId:app,documentIds:docs},created.id),e=>e.status===403);
-   await assert.rejects(registry.disable(caller,created.id),e=>e.status===403);
- }
- await assert.rejects(registry.list({actor:{...ownHuman.actor,authorization:{...ownHuman.actor.authorization,expiresAt:1}}}),e=>e.status===403);
- await assert.rejects(registry.list({actor:{...ownHuman.actor,authorization:undefined}}),e=>e.status===403);
- await registry.disable(ownHuman,registrationSource.id);
- await registry.save(ownHuman,{systemId:registration.id,applicationId:app,documentIds:docs,enabled:true},registrationSource.id);
- console.log('PASS authenticated users list and edit shared integrations without a UUID allowlist; explicit organization restrictions, mixed scopes, expired sessions and machine policies stay isolated');
+    // Every human integration operation requires an explicit scoped role.
+    const human = { actor };
+    const unassigned = {
+      actor: {
+        ...actor,
+        authorization: { ...actor.authorization, assignments: [] },
+      },
+    };
+    for (const operation of [
+      () => registry.list(unassigned),
+      () =>
+        registry.save(
+          unassigned,
+          { systemId: registration.id, applicationId: app, documentIds: docs },
+          registrationSource.id,
+        ),
+      () => registry.disable(unassigned, registrationSource.id),
+    ]) {
+      await assert.rejects(operation, (e) => e.status === 403);
+    }
+    const viewer = {
+      actor: {
+        ...actor,
+        authorization: {
+          ...actor.authorization,
+          assignments: actor.authorization.assignments.map((a) => ({
+            ...a,
+            role_code: 'legal.viewer',
+          })),
+        },
+      },
+    };
+    await assert.rejects(
+      registry.disable(viewer, registrationSource.id),
+      (e) => e.status === 403,
+    );
+    const wrongScope = {
+      actor: {
+        ...actor,
+        authorization: {
+          ...actor.authorization,
+          assignments: actor.authorization.assignments.map((a) => ({
+            ...a,
+            resource_scope: { type: 'applications', ids: [randomUUID()] },
+          })),
+        },
+      },
+    };
+    assert.equal((await registry.list(wrongScope)).length, 0);
+    await assert.rejects(
+      registry.disable(wrongScope, registrationSource.id),
+      (e) => e.status === 403,
+    );
+    await assert.rejects(
+      registry.list({
+        actor: {
+          ...actor,
+          authorization: { ...actor.authorization, expiresAt: 1 },
+        },
+      }),
+      (e) => e.status === 403,
+    );
+    assert.ok(
+      (await registry.list(human)).some((s) => s.id === registrationSource.id),
+    );
+    await registry.disable(human, registrationSource.id);
+    await registry.save(
+      human,
+      {
+        systemId: registration.id,
+        applicationId: app,
+        documentIds: docs,
+        enabled: true,
+      },
+      registrationSource.id,
+    );
+    console.log(
+      'PASS explicit integration grants, viewer mutation denial, missing/expired assignments and application boundaries; machine evidence policies unchanged',
+    );
  console.log('PASS PostgreSQL catalog backfill, stable historical clients, forward-only rollback protection, system disablement, concurrent preparation and acceptance, lost response, payload conflict, source/user/org/client isolation, expiry, changed documents, v2 evidence, per-system service resolution and disabled service rejection');
  }finally{await db.destroy();}
 }

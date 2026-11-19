@@ -139,24 +139,15 @@ bun run --cwd apps/api build
 Todas las pruebas viven en [`test/`](../../test/README.md). Los módulos agrupan Redis, sesión, eventos y las responsabilidades de aceptación/registro de integraciones; los contratos HTTP se conservan.
 
 
-## Modo temporal de acciones de Legal
+## Autorización por roles y permisos
 
-`HEMIA_AUTHORIZATION_MODE=roles` es el valor predeterminado y conserva las asignaciones de roles explícitas.
+Legal admite únicamente `HEMIA_AUTHORIZATION_MODE=roles` (predeterminado). El antiguo valor `authenticated` impide el arranque: desplegar Legal y Access con roles, con las asignaciones explícitas revisadas antes de activar la nueva versión.
 
-Para habilitar temporalmente todas las acciones de usuarios humanos elegibles, configurar `HEMIA_AUTHORIZATION_MODE=authenticated` en el backend de Legal **y** en Access. Es válido en local y producción y requiere reiniciar/recrear los servicios. Esta configuración no contiene secretos.
+Cada acción humana exige un contexto firmado y vigente de Access, identidad/organización/membresía vinculadas, producto activo y asignaciones del catálogo Legal. Una sesión sin asignaciones no otorga permisos. Los contextos se vuelven a validar al leer la caché; las mutaciones resuelven autoridad vigente. La interfaz recibe sólo permisos de asignaciones efectivas, sin permisos sintéticos por login.
 
-El modo no evita el login SSO, las firmas y bindings del contexto, la expiración, la membresía activa, el producto habilitado, los controles de servicio a servicio ni las validaciones de datos. Access debe emitir el contrato Legal v1/catalog v2 con `assignments: []`; Legal no inventa ni persiste roles o asignaciones. Los catálogos legales compartidos quedan disponibles y la evidencia de aceptaciones y notificaciones permanece limitada a la organización seleccionada.
+Los roles `viewer`, `editor`, `publisher` y `catalog_manager` administran recursos según su alcance. `integration_manager` requiere emisores o aplicaciones explícitos. `auditor` y `notification_operator` requieren además alcance de consumidores: usar `organizations` para las organizaciones autorizadas y reservar `all_organizations` para operadores que realmente lo necesiten. La lectura global de catálogos no autoriza consultar evidencia global ni modificarla.
 
-Legal devuelve los permisos de su catálogo al frontend únicamente tras validar un contexto vigente. Las entradas de caché se separan por modo y los contextos se validan también después de una lectura de caché.
-
-Para revertir, restaurar `HEMIA_AUTHORIZATION_MODE=roles` en Legal y Access y reiniciar/recrear ambos. El modo estricto rechaza contextos sin asignaciones. No se necesitan migraciones, seeds ni cambios de roles en la base.
-
-En modo `authenticated`, las integraciones compartidas (sin restricción de organización, como las creadas desde Console) se pueden listar, abrir, editar y deshabilitar desde Legal sin registrar UUIDs de organizaciones en una variable de entorno. Editarlas no agrega restricciones de organización. Las integraciones exclusivas de otra organización, o restringidas a varias organizaciones, siguen fuera del alcance de la sesión. Las integraciones nuevas guardan su restricción de organización en la misma transacción.
-
-La administración de esta configuración técnica no amplía las políticas de las máquinas ni el acceso a aceptaciones, evidencia o notificaciones de otras organizaciones. La administración humana de clientes de servicio conserva el alcance de la organización seleccionada y no permite delegar acceso global.
-
-Los conjuntos de documentos siguen el alcance de su integración: en `authenticated` pueden consultarse y administrarse los de integraciones compartidas o exclusivas de la organización activa, sin lista manual de UUID. Se ocultan los conjuntos de integraciones restringidas a otras organizaciones o con alcance mixto. Las escrituras verifican tanto la integración de destino como la del conjunto existente, para impedir apropiarse de un conjunto ajeno cambiando `sourceId`. En modo `roles` se mantienen los permisos y alcances de aplicación. La evidencia, las notificaciones y los accesos de máquinas conservan su aislamiento.
-
+Las integraciones y conjuntos de documentos siguen los permisos y alcances de recurso de sus administradores. Las restricciones de consumidores de una integración siguen aplicándose a máquinas/evidencia. El catálogo técnico conserva el servicio dedicado de Console y su actor atestiguado, autorizado previamente por Console. No se cambian roles, asignaciones, políticas de máquinas ni datos automáticamente; no requiere migración de esquema.
 
 ## Redis local autenticado en desarrollo
 

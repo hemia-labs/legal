@@ -73,6 +73,7 @@ def create(tag, output, images=None):
             raise ValueError('Selected image digest differs from local image')
         config['services'][service].pop('build', None)
         config['services'][service]['image'] = images[service]
+    config['services']['api'].setdefault('environment', {})['HEMIA_AUTHORIZATION_MODE'] = 'roles'
     config['services']['api']['env_file'] = [{'path': '${LEGAL_ENV_FILE:?Set the server environment file}', 'format': 'raw'}]
     config['services']['web']['ports'] = ['${LEGAL_BIND_ADDRESS:-127.0.0.1}:${LEGAL_HTTP_PORT:-8082}:3000']
     (output / 'compose.json').write_text(json.dumps(config, indent=2) + '\n')

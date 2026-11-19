@@ -139,26 +139,14 @@ export class DocumentSetsService {
       'SELECT * FROM legal_document_sets WHERE application_id=$1 ORDER BY key',
       [applicationId],
     );
-    const visible = await Promise.all(
-      rows.map(async (row) =>
-        (await this.registry.consumerAllowed(
-          actor.authorization,
-          row.source_id,
-        ))
-          ? row
-          : null,
-      ),
-    );
-    return visible
-      .filter((row) => row !== null)
-      .map((r) => ({
-        applicationId: r.application_id,
-        key: r.key,
-        name: r.name,
-        revision: r.revision,
-        configuration: r.configuration,
-        effectiveFrom: r.effective_from,
-      }));
+    return rows.map((r) => ({
+      applicationId: r.application_id,
+      key: r.key,
+      name: r.name,
+      revision: r.revision,
+      configuration: r.configuration,
+      effectiveFrom: r.effective_from,
+    }));
   }
   async save(
     applicationId: string,
@@ -213,15 +201,6 @@ export class DocumentSetsService {
         throw new BadRequestException(
           'Enabled integration for this application required',
         );
-      if (
-        !(await this.registry.consumerAllowed(
-          actor.authorization,
-          dto.sourceId,
-          m,
-          true,
-        ))
-      )
-        throw new ForbiddenException('Integration outside consumer scope');
       if (dto.verification === 'verified_session') {
         const service = resolveVerificationService(
           source.services,
@@ -251,18 +230,6 @@ export class DocumentSetsService {
         'SELECT * FROM legal_document_sets WHERE application_id=$1 AND key=$2 FOR UPDATE',
         [applicationId, key],
       );
-      // A visible destination must not allow taking over another organization's set.
-      if (
-        old &&
-        old.source_id !== dto.sourceId &&
-        !(await this.registry.consumerAllowed(
-          actor.authorization,
-          old.source_id,
-          m,
-          true,
-        ))
-      )
-        throw new ForbiddenException('Document set outside consumer scope');
       if (
         (old && dto.expectedRevision !== old.revision) ||
         (!old && dto.expectedRevision)
